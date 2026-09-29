@@ -1,0 +1,16 @@
+{
+  "name": "STT Logistika",
+  "short_name": "STT",
+  "description": "Narudžbe, zadaci, rezervacije i zalihe za veleprodaju i maloprodaju.",
+  "lang": "bs",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#17130f",
+  "theme_color": "#17130f",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

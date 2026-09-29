@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+.env
+.env*.local
+.vercel
+*.log
+.DS_Store
+agent/.eki_sync_state.json
+agent/config.ini
+__pycache__/
+agent/eki_sync.log
+agent/.eki_sync_state.tmp

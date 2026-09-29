@@ -1,0 +1,24 @@
+{
+  "name": "stt-logistika",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "STT Logistika: narudžbe, zadaci, rezervacije laptopa i promjene zaliha za veleprodaju i maloprodaju, dok ne stigne novi ERP.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.39.0",
+    "lucide-react": "^1.48.0",
+    "next": "^16.3.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "web-push": "^3.6.7"
+  }
+}
