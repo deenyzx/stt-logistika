@@ -2,12 +2,12 @@
 // Pregled: today's numbers on the black band, what needs attention, the inbox and the latest notifications.
 import { useMemo, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
-import { Icon, Button, StatusTag, SourceChip, ResTag, Empty, cx } from '@/components/ui.jsx';
-import { TaskForm } from '@/components/Tasks.jsx';
+import { Icon, Button, StatusTag, SourceChip, ResTag, Tag, Empty, cx } from '@/components/ui.jsx';
+import { TaskForm, QuickOrderForm } from '@/components/Tasks.jsx';
 import { ReservationForm } from '@/components/Reservations.jsx';
-import { InboxActions } from '@/components/InboxPage.jsx';
+import { InboxActions, KindTag } from '@/components/InboxPage.jsx';
 import { can, isOpenTask, SOURCES, PAYMENT } from '@/lib/constants.js';
-import { fmtDue, fmtDate, fmtWhen, daysFromToday, fold, todayISO, TZ } from '@/lib/format.js';
+import { fmtDue, fmtDate, fmtWhen, fmtMoney, daysFromToday, fold, todayISO, preview, TZ } from '@/lib/format.js';
 
 const DAYS = ['NEDJELJA', 'PONEDJELJAK', 'UTORAK', 'SRIJEDA', 'ČETVRTAK', 'PETAK', 'SUBOTA'];
 
@@ -33,6 +33,8 @@ function urgency(t) {
   if (t.status === 'ceka_kalkulaciju' || t.status === 'za_fakturu') s += 40;
   if (t.status === 'nova') s += 35;
   if (t.status === 'ceka_robu') s += 10;
+  if (t.needsInfo) s += 45;
+  if (t.expectedAt && daysFromToday(t.expectedAt) <= 0) s += 50;
   return s;
 }
 
@@ -41,6 +43,7 @@ export default function Overview() {
   const [q, setQ] = useState('');
   const [newTask, setNewTask] = useState(false);
   const [newRes, setNewRes] = useState(false);
+  const [quick, setQuick] = useState(false);
   const canTasks = can(me.role, 'zadaci');
   const canInbox = can(me.role, 'prijem');
   const canRes = can(me.role, 'rezervacije');
@@ -54,7 +57,10 @@ export default function Overview() {
   const expiring = activeRes.filter((r) => r.until && daysFromToday(r.until) <= 1).sort((a, b) => (a.until < b.until ? -1 : 1));
   const newToday = open.filter((t) => todayISO(t.createdAt) === today).length;
   const attention = [...open].sort((a, b) => urgency(b) - urgency(a) || (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6);
-  const inbox = data.inbox.filter((x) => x.status === 'novo');
+  const inbox = data.inbox.filter((x) => x.status === 'novo' && x.kind !== 'ostalo');
+  // Goods expected in the next two weeks, or already late.
+  const arriving = open.filter((t) => t.expectedAt && daysFromToday(t.expectedAt) <= 14).sort((a, b) => (a.expectedAt < b.expectedAt ? -1 : 1));
+  const nextArrival = open.filter((t) => t.expectedAt).map((t) => t.expectedAt).sort()[0];
 
   const results = useMemo(() => {
     const f = fold(q);
@@ -75,6 +81,7 @@ export default function Overview() {
           <span className="sr">Pretraga</span>
           <input className="input" type="search" placeholder="Traži kupca, broj, šifru" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
+        {canTasks ? <Button icon="quick" onClick={() => setQuick(true)}>Brzi unos</Button> : null}
         {me.role === 'maloprodaja' && canRes ? <Button variant="primary" icon="plus" onClick={() => setNewRes(true)}>Nova rezervacija</Button>
           : canTasks ? <Button variant="primary" icon="plus" onClick={() => setNewTask(true)}>Nova narudžba</Button> : null}
       </PageHead>
@@ -115,7 +122,7 @@ export default function Overview() {
               <button type="button" className="stat" onClick={() => go('zadaci', '~ceka_robu')}>
                 <span className="stat-label">Čeka robu</span>
                 <span className="stat-value">{waiting.length}</span>
-                <span className="stat-hint">{!waiting.length ? 'Ništa ne čeka' : oldestWait === 0 ? 'Sve od danas' : `Najstarija čeka ${oldestWait} ${oldestWait === 1 ? 'dan' : 'dana'}`}</span>
+                <span className="stat-hint">{!waiting.length ? 'Ništa ne čeka' : nextArrival ? `Sljedeća stiže ${fmtDue(nextArrival)}` : oldestWait === 0 ? 'Sve od danas' : `Najstarija čeka ${oldestWait} ${oldestWait === 1 ? 'dan' : 'dana'}`}</span>
               </button>
               <button type="button" className={cx('stat', calc.length && 'stat-accent')} onClick={() => go('zadaci', '~ceka_kalkulaciju')}>
                 <span className="stat-label">Čeka ulaznu kalkulaciju</span>
@@ -149,7 +156,7 @@ export default function Overview() {
                     return (
                       <button key={t.id} type="button" className="rowlink" onClick={() => go('zadaci', t.id)}>
                         <span className="rowlink-main">
-                          <span className="row"><span className="num-label">{t.number}</span><StatusTag status={t.status} short /></span>
+                          <span className="row"><span className="num-label">{t.number}</span><StatusTag status={t.status} short />{t.needsInfo ? <Tag tone="accent" icon="edit">Dopuniti</Tag> : null}{t.expectedAt && daysFromToday(t.expectedAt) <= 0 ? <Tag tone="wait" icon="truck">{daysFromToday(t.expectedAt) < 0 ? 'Kasni roba' : 'Roba stiže danas'}</Tag> : null}</span>
                           <span className="rowlink-title">{t.title}</span>
                           <span className="rowlink-meta">{[t.customer?.name, SOURCES[t.source]?.label, t.assignee ? 'Dodijeljeno: ' + (data.users.find((u) => u.id === t.assignee)?.name || '?') : 'Nije dodijeljeno'].filter(Boolean).join(' · ')}</span>
                         </span>
@@ -162,6 +169,32 @@ export default function Overview() {
                   })}
                 </div>
               )}
+            </section>
+          ) : null}
+
+          {canTasks && arriving.length ? (
+            <section className="card" aria-label="Roba stiže">
+              <div className="card-head">
+                <h2 className="h-heading">Roba stiže</h2>
+                <button type="button" className="btn btn-quiet btn-sm" onClick={() => go('zadaci', '~stize')}>Sve po dolasku<Icon name="arrow" size={16} /></button>
+              </div>
+              <div className="rows">
+                {arriving.slice(0, 6).map((t) => {
+                  const d = daysFromToday(t.expectedAt);
+                  return (
+                    <button key={t.id} type="button" className="rowlink" onClick={() => go('zadaci', t.id)}>
+                      <span className="rowlink-main">
+                        <span className="row"><span className="num-label">{t.number}</span><StatusTag status={t.status} short /></span>
+                        <span className="rowlink-title">{t.title}</span>
+                        <span className="rowlink-meta">{[t.customer?.name, t.supplier].filter(Boolean).join(' · ')}</span>
+                      </span>
+                      <span className="rowlink-side">
+                        <span className={d < 0 ? 'is-late' : undefined} style={{ fontWeight: 600 }}>{d < 0 ? `Kasni ${-d} ${d === -1 ? 'dan' : 'dana'}` : d === 0 ? 'Danas' : d === 1 ? 'Sutra' : fmtDate(t.expectedAt)}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </section>
           ) : null}
 
@@ -197,8 +230,9 @@ export default function Overview() {
                 <div className="rows">
                   {inbox.slice(0, 3).map((x) => (
                     <div key={x.id} className="stack" style={{ gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--line)' }}>
-                      <div className="row small muted"><Icon name={x.source === 'web' ? 'globe' : 'mail'} size={16} /><span className="grow">{x.source === 'web' ? 'Web shop' + (x.order?.number ? ' #' + x.order.number : '') : x.from?.email || x.from?.name}</span><span>{fmtWhen(x.receivedAt)}</span></div>
+                      <div className="row small muted"><KindTag item={x} /><span className="grow">{x.source === 'web' ? '#' + (x.order?.number || '') : x.from?.name || x.from?.email}</span><span>{fmtWhen(x.receivedAt)}</span></div>
                       <button type="button" className="rowlink-title" style={{ all: 'unset', cursor: 'pointer', fontWeight: 600 }} onClick={() => go('prijem', x.id)}>{x.title}</button>
+                      <span className="small muted nbody nbody-2">{x.order ? [x.from?.name, x.order.city, x.order.total != null && fmtMoney(x.order.total, x.order.currency), x.order.payment].filter(Boolean).join(' · ') : preview(x.body, 180)}</span>
                       <InboxActions item={x} compact />
                     </div>
                   ))}
@@ -217,6 +251,7 @@ export default function Overview() {
                     <span className="ndot" />
                     <span className="stack grow" style={{ gap: 2 }}>
                       <span className="small" style={{ fontWeight: 600 }}>{n.title}</span>
+                      {n.body ? <span className="small muted nbody nbody-2">{n.body}</span> : null}
                       <span className="small muted">{fmtWhen(n.at)}</span>
                     </span>
                   </button>
@@ -229,6 +264,7 @@ export default function Overview() {
 
       {newTask ? <TaskForm onClose={() => setNewTask(false)} /> : null}
       {newRes ? <ReservationForm onClose={() => setNewRes(false)} /> : null}
+      {quick ? <QuickOrderForm onClose={() => setQuick(false)} /> : null}
     </main>
   );
 }

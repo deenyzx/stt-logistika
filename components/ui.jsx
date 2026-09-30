@@ -6,7 +6,8 @@ import {
   Clock, Check, Truck, Calculator, Wallet, Upload, ArrowUp, ArrowDown, ArrowRight, ChevronLeft, ChevronRight, X, Trash2,
   LogOut, Sun, Moon, Store, Hourglass, CircleCheck, CircleAlert, Info, Send, FileText, Pencil, Ellipsis, Lock, KeyRound,
   RefreshCw, CloudOff, CirclePlus, Ban, Undo2, Link as LinkIcon, Copy, ExternalLink, Calendar, Minus, Download, Receipt,
-  Building2, History, Save, CheckCheck, Archive, BellOff, Smartphone, Plug,
+  Building2, History, Save, CheckCheck, Archive, BellOff, Smartphone, Plug, ShoppingCart, BellRing, MapPin, Paperclip,
+  PhoneIncoming, PackageCheck,
 } from 'lucide-react';
 import { initials, fmtWhen } from '@/lib/format.js';
 import { TASK_STATUS, RES_STATUS, SOURCES } from '@/lib/constants.js';
@@ -22,7 +23,8 @@ const ICONS = {
   edit: Pencil, more: Ellipsis, lock: Lock, key: KeyRound, sync: RefreshCw, offline: CloudOff, new: CirclePlus, ban: Ban,
   undo: Undo2, link: LinkIcon, copy: Copy, external: ExternalLink, calendar: Calendar, minus: Minus, download: Download,
   receipt: Receipt, building: Building2, history: History, save: Save, checkall: CheckCheck, archive: Archive,
-  belloff: BellOff, phonebig: Smartphone, plug: Plug,
+  belloff: BellOff, phonebig: Smartphone, plug: Plug, cart: ShoppingCart, bellring: BellRing, pin: MapPin, attach: Paperclip,
+  quick: PhoneIncoming, arrived: PackageCheck,
 };
 
 export function Icon({ name, size = 20, className, label, strokeWidth = 2 }) {
@@ -182,14 +184,19 @@ export function Sheet({ title, onClose, children, footer, wide, flush }) {
   const ref = useRef(null);
   useEffect(() => {
     const prev = document.activeElement;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    // Only the sheet on top reacts to Escape (a picker can open over another sheet).
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      const all = document.querySelectorAll('.overlay');
+      if (all[all.length - 1] === ref.current?.parentElement) onClose();
+    };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     const first = ref.current?.querySelector('input, textarea, select, button:not(.sheet-x)');
     (first || ref.current)?.focus?.();
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
+      if (document.querySelectorAll('.overlay').length <= 1) document.body.style.overflow = '';
       prev?.focus?.();
     };
   }, [onClose]);

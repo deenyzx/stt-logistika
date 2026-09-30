@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
 import { Icon, Button, Segmented, Input, Select, Sheet, Tag, Note, Avatar } from '@/components/ui.jsx';
-import { ROLES, DEPTS } from '@/lib/constants.js';
+import { ROLES, DEPTS, NOTIF_CATS, can } from '@/lib/constants.js';
 
 function b64ToUint8(b64) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -22,6 +22,7 @@ export default function SettingsPage() {
       <PageHead title="Postavke" />
       <Account />
       <Push />
+      <NotifPrefs />
       {me.role === 'admin' ? <><Users /><Integrations /><StockSettings /><ExportData /></> : null}
     </main>
   );
@@ -146,6 +147,35 @@ function Push() {
   );
 }
 
+function NotifPrefs() {
+  const { data, me, reload, toast } = useApp();
+  const [muted, setMuted] = useState(() => new Set(data.notifications.muted || []));
+  const [busy, setBusy] = useState(false);
+  const cats = Object.entries(NOTIF_CATS).filter(([, c]) => !c.area || can(me.role, c.area));
+  const toggle = async (key, on) => {
+    const next = new Set(muted);
+    if (on) next.delete(key); else next.add(key);
+    setMuted(next);
+    setBusy(true);
+    try { await api('PATCH', '/api/prefs', { muted: [...next] }); toast(on ? 'Uključeno: ' + NOTIF_CATS[key].label : 'Isključeno: ' + NOTIF_CATS[key].label); reload(); }
+    catch (e) { toast(e.message, { error: true }); setMuted(muted); }
+    setBusy(false);
+  };
+  return (
+    <Section id="sta-primam" title="Šta želim dobijati">
+      <p className="muted">Vrijedi za zvono u aplikaciji i za push obavijesti na svim tvojim uređajima. Web narudžbe dolaze s kupcem, telefonom, gradom, stavkama, iznosom, plaćanjem i dostavom; emailovi s pošiljaocem i početkom poruke.</p>
+      <div className="stack">
+        {cats.map(([key, c]) => (
+          <label key={key} className="urow checkrow">
+            <input type="checkbox" checked={!muted.has(key)} disabled={busy} onChange={(e) => toggle(key, e.target.checked)} />
+            <span className="grow">{c.label}</span>
+          </label>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function Users() {
   const { me, toast, reload } = useApp();
   const [users, setUsers] = useState(null);
@@ -219,9 +249,9 @@ function UserForm({ user, onClose, onDone }) {
         <Select label="Uloga" value={f.role} onChange={(v) => set('role', v)} options={Object.entries(ROLES).map(([value, r]) => ({ value, label: r.label }))} />
         <Input label={edit ? 'Nova lozinka (ostavi prazno da ostane ista)' : 'Lozinka'} type="text" value={f.password} onChange={(v) => set('password', v)} autoComplete="off" hint="Bar 6 znakova. Kolega je može promijeniti u Postavkama." />
         {edit && user.id !== me.id ? (
-          <label className="row" style={{ gap: 10, cursor: 'pointer' }}>
-            <input type="checkbox" checked={f.disabled} onChange={(e) => set('disabled', e.target.checked)} style={{ width: 22, height: 22 }} />
-            Isključi nalog (ne može se prijaviti)
+          <label className="checkrow">
+            <input type="checkbox" checked={f.disabled} onChange={(e) => set('disabled', e.target.checked)} />
+            <span>Isključi nalog (ne može se prijaviti)</span>
           </label>
         ) : null}
         <button type="submit" hidden />
@@ -256,8 +286,8 @@ function Integrations() {
         <CopyRow value={origin + '/api/integrations/woocommerce'} />
       </div>
       <div className="stack" style={{ gap: 10 }}>
-        <div className="row"><strong className="grow">Email narudžbe</strong><Status on={i.email} /></div>
-        <p className="small muted">Emailovi se prosljeđuju servisu za dolaznu poštu (npr. Postmark) ili ih šalje agent iz ureda (IMAP). Adresa na koju šalju{i.emailPath ? '' : ' (pojavi se kad se postavi EMAIL_INBOUND_SECRET)'}:</p>
+        <div className="row"><strong className="grow">Email (narudžbe i emailovi kupaca)</strong><Status on={i.email} /></div>
+        <p className="small muted">Agent iz ureda čita poštu (IMAP) ili je prosljeđuje servis za dolaznu poštu (npr. Postmark). U prijemu se sami razvrstaju na narudžbe, emailove kupaca i ostalo; newsletteri se preskaču. Adresa na koju šalju{i.emailPath ? '' : ' (pojavi se kad se postavi EMAIL_INBOUND_SECRET)'}:</p>
         {i.emailPath ? <CopyRow value={origin + i.emailPath} /> : null}
       </div>
       <div className="stack" style={{ gap: 10 }}>
@@ -265,6 +295,10 @@ function Integrations() {
         <p className="small muted">Program agent/eki_sync.py na računaru u uredu šalje svaki novi CSV. U njegovu konfiguraciju upiši adresu ispod i STOCK_AGENT_TOKEN iz Vercela.</p>
         <CopyRow value={origin} />
         {data.stockLatest ? <p className="small muted">Zadnji izvoz: {data.stockLatest.filename}, {new Date(data.stockLatest.at).toLocaleString('bs-BA')}</p> : null}
+      </div>
+      <div className="stack" style={{ gap: 10 }}>
+        <div className="row"><strong className="grow">Jutarnji podsjetnik</strong><Status on={i.cron}>Podešen</Status></div>
+        <p className="small muted">Svako jutro oko 7 sati: roba koja stiže tog dana ili kasni, rokovi, narudžbe koje treba dopuniti i rezervacije koje ističu. Treba CRON_SECRET u Vercelu (vidi README).</p>
       </div>
     </Section>
   );
@@ -290,9 +324,9 @@ function StockSettings() {
       <div className="grid3">{colField('key', 'Šifra artikla')}{colField('qty', 'Količina')}{colField('name', 'Naziv')}</div>
       <div><Button icon="save" busy={busy} onClick={() => save({ stockMapping: m }, 'Kolone sačuvane')}>Sačuvaj kolone</Button></div>
       <hr style={{ border: 0, borderTop: '1px solid var(--line)', width: '100%', margin: '4px 0' }} />
-      <label className="row" style={{ gap: 10, cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!s.autoAcceptWeb} onChange={(e) => save({ autoAcceptWeb: e.target.checked })} style={{ width: 22, height: 22 }} />
-        <span className="grow">Web narudžbe odmah pretvori u zadatak (bez prijema)</span>
+      <label className="checkrow">
+        <input type="checkbox" checked={!!s.autoAcceptWeb} onChange={(e) => save({ autoAcceptWeb: e.target.checked })} />
+        <span>Web narudžbe odmah pretvori u narudžbu (bez prijema)</span>
       </label>
       {s.autoAcceptWeb ? <Select label="Odjel za web narudžbe" value={s.webDept} onChange={(v) => save({ webDept: v })} options={Object.entries(DEPTS).map(([value, label]) => ({ value, label }))} /> : null}
     </Section>

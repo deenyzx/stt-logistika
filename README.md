@@ -4,12 +4,24 @@ Temporary internal tool for wholesale (veleprodaja) and retail (maloprodaja), fo
 
 What it does:
 
-- **Narudžbe i zadaci (orders and tasks):** every order that comes in by email, phone, Viber, WhatsApp, the web shop or in person becomes a task with a customer, items, a due date, an assignee and a department. Status steps are *Novo → U obradi → Čeka robu → Čeka ulaznu kalkulaciju → Za fakturisanje → Završeno*. This covers the "shipment is on its way from the distributor, the invoice waits for the ulazna kalkulacija" case: set the order to *Čeka robu*, and when the goods arrive press **Roba stigla**.
-- **Prijem (inbox):** WooCommerce orders and order emails arrive here by themselves. **Prihvati kao zadatak** turns one into an order, pre-filled with the customer and items. **Odbaci** dismisses it.
+- **Narudžbe i zadaci (orders and tasks):** every order that comes in by email, phone, Viber, WhatsApp, the web shop or in person becomes a task. It has a customer (name, contact person, phone, email, delivery address), items, payment, delivery, total, an order date, an arrival date for the goods, a due date, an assignee and a department. Status steps are *Novo → U obradi → Čeka robu → Čeka ulaznu kalkulaciju → Za fakturisanje → Završeno*. This covers the "shipment is on its way from the distributor, the invoice waits for the ulazna kalkulacija" case: set the order to *Čeka robu* with the date the goods arrive, and when they come press **Roba stigla**.
+  - **Sorted by date:** the list is sorted by order date, newest first, with a heading per day (Danas, Juče, Ponedjeljak 28. 9. …). It can also be sorted by oldest first, by arrival of goods, by due date or by status.
+  - **Brzi unos (quick entry):** for orders taken by phone or in person. Type what was ordered, who, and the phone number. The order is marked **Dopuniti** until you fill in the rest and press *Sve je upisano*.
+  - **Roba stiže (arrival date):** for goods you're waiting on. Orders with an arrival date show on Pregled under *Roba stiže*, and the morning reminder lists what arrives that day or is late.
+  - **Prati (watch):** follow any order to be notified about its status, arrival date and comments, even if it isn't yours.
+- **Prijem (inbox):** WordPress/WooCommerce orders and emails arrive here by themselves, sorted into three kinds:
+  - **Narudžbe (orders):** web shop orders and emails that are orders. **Prihvati kao narudžbu** makes an order with everything filled in: customer, phone, email, address, items, payment, delivery, total, and the day it was ordered. An order that came by email is marked *Dopuniti*, because the details are in the text.
+  - **Emailovi kupaca (customers' emails):** questions, quote requests, "when does my order arrive". **Napravi zadatak** makes a task "Odgovoriti: …". **Dodaj u narudžbu** puts the email on the order it is about (orders from the same sender are suggested first). **Riješeno** marks it done.
+  - **Ostalo (other):** anything automatic. No notification.
+  
+  Sorting is automatic and can be changed per email. When WooCommerce also sends its own "Nova narudžba #…" email, it is matched to the web order and not shown twice.
 - **Rezervacije (laptop reservations):** each reservation records who made it (name and department), who it is for, the purpose, the payment type (cash, card, bank transfer, credit/instalments, cash on delivery…), the deposit, a "reserved until" date, and comments. Every new reservation notifies both departments.
 - **Zalihe (stock):** upload the CSV your PDF scraper produces from the EKI EDI invoices, or let the office agent upload it. The app compares it with the previous export and lists what changed: quantity changes, new articles, and articles that disappeared. Tick each row once the web shop is updated.
 - **Comments everywhere:** on orders, reservations, inbox items and stock exports. Writing `@Ime` notifies that colleague.
 - **Logins with roles and notifications:** each person has their own account (Administrator, Veleprodaja, Maloprodaja). Notifications show on the bell in the app, and as phone or desktop push notifications once push is turned on for that device.
+  - A web shop order's notification carries all its details: order number and total in the title, then the customer, city and phone, the items, the payment and delivery, and the customer's note.
+  - An email's notification carries the sender, their phone number if it appears in the email, and the start of the message.
+  - In **Postavke → Šta želim dobijati** each person turns categories on or off for themselves.
 - **Pregled (overview):** today's numbers, what needs attention (late, due soon, waiting on a kalkulacija), the inbox, and the latest notifications. Search covers customers, order numbers and article codes.
 
 ## Integrations: what is possible and what is built
@@ -33,9 +45,9 @@ The app checks WooCommerce's signature on every call, so nobody else can post fa
 
 ### Company email → built (the receiving side). You choose how mail gets to it.
 
-The app has an address that accepts emails and puts them in Prijem, where you accept them as tasks. There are two ways to feed it, depending on where the company mailbox is hosted:
+The app has an address that accepts emails and puts them in Prijem. There they are sorted into orders, customers' emails and other mail, and you turn them into orders or tasks. There are two ways to feed it, depending on where the company mailbox is hosted:
 
-- **A. The office agent reads one mailbox folder over IMAP (recommended if the mail is on cPanel/hosting mail).** Make a mail rule that moves order emails into a folder, e.g. `Narudzbe`. Put the IMAP details in the agent's `config.ini`. The agent checks the folder every minute and sends new emails over. No outside service and no cost, but the office PC has to be on.
+- **A. The office agent reads the mailbox over IMAP (recommended if the mail is on cPanel/hosting mail).** Put the IMAP details in the agent's `config.ini`. By default it reads `INBOX`, and `folders` takes several folders separated by commas. It checks every minute and sends new emails over. It skips newsletters, mailing lists and automatic replies, plus any senders listed in `ignore_from`. No outside service and no cost, but the office PC has to be on.
   - Gmail/Google Workspace: IMAP works with an *app password* (requires 2-step verification).
   - Microsoft 365/Outlook.com: Microsoft switched off password login for IMAP, so this route does not work there. Use B.
 - **B. Forward to an inbound-email service.** Set up a forwarding rule for order emails to an inbound address at Postmark, Mailgun or SendGrid (all offer a small free tier), or use a Make/Zapier "new email → webhook" scenario. Point it at `https://<your-domain>/api/integrations/email/<EMAIL_INBOUND_SECRET>`. The endpoint understands Postmark, Mailgun and SendGrid payloads, as well as plain JSON `{ from, subject, text }`.
@@ -74,6 +86,7 @@ How the comparison works: rows are matched on the article code, and rows with th
    | `WOO_WEBHOOK_SECRET` | Same secret as in the WooCommerce webhook. |
    | `EMAIL_INBOUND_SECRET` | Secret part of the email address (at least 16 characters). |
    | `STOCK_AGENT_TOKEN` | Token the office agent sends (at least 16 characters). |
+   | `CRON_SECRET` | Long random string. Turns on the morning reminder: Vercel calls `/api/cron/daily` once a day (set in `vercel.json`, about 7:00 in Sarajevo) and sends this secret. |
    | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | For push notifications. Generate the pair with `npx web-push generate-vapid-keys`; the subject is `mailto:you@company.ba`. |
 
 4. Redeploy. Log in as the admin, then add colleagues in **Postavke → Korisnici** (name, username, role, starting password). Each colleague can change their password in Postavke.
@@ -94,10 +107,10 @@ On the office PC (Windows):
 | Role | Sees | Is notified about |
 | --- | --- | --- |
 | Administrator | Everything, plus users, integrations, settings, data export | Everything the departments hear |
-| Veleprodaja | Orders and tasks, Prijem, reservations, stock | New wholesale orders, Prijem, new stock exports, all reservations |
+| Veleprodaja | Orders and tasks, Prijem, reservations, stock | New wholesale orders, Prijem (web orders, email orders, customers' emails), new stock exports, all reservations |
 | Maloprodaja | Orders and tasks, reservations | New retail orders, all reservations |
 
-On top of that, everyone is notified about orders assigned to them, status changes and comments on things they created, are assigned to or commented on, and every `@mention`. To change who sees what, edit `ACCESS` in `lib/constants.js`.
+On top of that, everyone is notified about orders assigned to them, status changes, arrival dates and comments on things they created, are assigned to, watch (*Prati*) or commented on, and every `@mention`. The morning reminder goes to each person with their own list. Everyone can switch categories off for themselves in Postavke. To change who sees what, edit `ACCESS` in `lib/constants.js`.
 
 ## Costs
 

@@ -28,6 +28,7 @@ export async function GET(req) {
       woo: !!process.env.WOO_WEBHOOK_SECRET,
       email: !!process.env.EMAIL_INBOUND_SECRET,
       agent: !!process.env.STOCK_AGENT_TOKEN,
+      cron: (process.env.CRON_SECRET || '').length >= 16,
       // Only the admin sees the secret part of the email address.
       emailPath: admin && process.env.EMAIL_INBOUND_SECRET ? '/api/integrations/email/' + process.env.EMAIL_INBOUND_SECRET : null,
     },

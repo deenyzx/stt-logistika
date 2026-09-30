@@ -6,7 +6,8 @@ Every minute it:
   1. (optional) runs your existing PDF → CSV scraper on every new invoice PDF in PDF_DIR,
   2. takes the newest CSV in WATCH_DIR and, if it is different from the last one sent, uploads it to the app
      (Zalihe shows what changed since the previous export),
-  3. (optional) reads new emails from one IMAP folder (e.g. "Narudzbe") and sends them to the app's Prijem.
+  3. (optional) reads new emails from the company mailbox (IMAP) and sends them to the app's Prijem, where they are
+     sorted into orders, customers' emails and the rest. Newsletters and automatic mail are skipped.
 
 Nothing is uploaded when nothing changed, so checking every minute costs nothing.
 Settings live in config.ini next to this file (copy config.example.ini). Run:  python eki_sync.py
@@ -193,61 +194,89 @@ def body_text(msg):
     return ""
 
 
+ORDER_WORDS = re.compile(r"(narud[zž]b|porud[zž]b|naru[cč]uj|naru[cč]i|\border\b|predra[cč]un)", re.I)
+
+
+def is_bulk(msg):
+    """Newsletters, mailing lists and automatic replies."""
+    return bool(msg.get("List-Unsubscribe") or re.search(r"bulk|list|junk", msg.get("Precedence", ""), re.I)
+                or (msg.get("Auto-Submitted") and msg.get("Auto-Submitted", "").lower() != "no"))
+
+
+def sync_folder(box, sec, folder, state, inbound, ignore_from, skip_bulk):
+    key = f"imap:{sec['imap_user']}@{sec['imap_host']}/{folder}"
+    seen = state.get(key, {})
+    typ, _ = box.select('"' + folder + '"', readonly=True)
+    if typ != "OK":
+        log.error("IMAP folder %s ne postoji", folder)
+        return
+    uidvalidity = box.response("UIDVALIDITY")[1][0]
+    uidvalidity = uidvalidity.decode() if isinstance(uidvalidity, bytes) else str(uidvalidity)
+    if seen.get("uidvalidity") != uidvalidity:
+        seen = {"uidvalidity": uidvalidity, "last_uid": 0}
+    since = (datetime.now() - timedelta(days=int(sec.get("since_days", "3")))).strftime("%d-%b-%Y")
+    typ, data = box.uid("search", None, "SINCE", since)
+    uids = [int(u) for u in (data[0] or b"").split()]
+    new = [u for u in uids if u > int(seen.get("last_uid", 0))]
+    if not seen.get("last_uid") and sec.get("skip_existing", "yes").lower() in ("yes", "da", "true", "1"):
+        # First run: start from now, don't import the whole folder.
+        seen["last_uid"] = max(uids) if uids else 0
+        new = []
+        log.info("IMAP: početak praćenja foldera %s (postojeći emailovi preskočeni)", folder)
+    for uid in sorted(new):
+        typ, msgdata = box.uid("fetch", str(uid), "(BODY.PEEK[])")
+        if typ != "OK" or not msgdata or not isinstance(msgdata[0], tuple):
+            continue
+        msg = email.message_from_bytes(msgdata[0][1])
+        sender = header(msg, "From")
+        subject = header(msg, "Subject")
+        seen["last_uid"] = uid
+        if any(x and x in sender.lower() for x in ignore_from):
+            log.info("Preskočeno (ignore_from): %s", subject[:80])
+            continue
+        if skip_bulk and is_bulk(msg) and not ORDER_WORDS.search(subject):
+            log.info("Preskočeno (newsletter/automatski): %s", subject[:80])
+            continue
+        payload = {
+            "from": sender,
+            "subject": subject,
+            "date": header(msg, "Date"),
+            "messageId": header(msg, "Message-ID") or f"imap-{uidvalidity}-{uid}",
+            "text": body_text(msg)[:20000],
+            "bulk": is_bulk(msg),
+        }
+        status, body = post(inbound, json.dumps(payload).encode("utf-8"), {"Content-Type": "application/json"})
+        if status == 200:
+            log.info("Email poslan u prijem: %s", subject[:80])
+        else:
+            log.error("Email nije poslan (%s): %s", status, body)
+            seen["last_uid"] = uid - 1  # try this one again next time
+            break
+    state[key] = seen
+
+
 def sync_email(cfg, state):
     if not cfg.has_section("email") or not cfg["email"].get("imap_host", "").strip():
         return
     sec = cfg["email"]
-    folder = sec.get("folder", "INBOX")
     inbound = sec.get("inbound_url", "").strip()
     if not inbound:
         log.warning("email.inbound_url nije postavljen (kopiraj adresu iz Postavke → Integracije).")
         return
-    key = f"imap:{sec['imap_user']}@{sec['imap_host']}/{folder}"
-    seen = state.get(key, {})
+    folders = [f.strip() for f in (sec.get("folders") or sec.get("folder") or "INBOX").split(",") if f.strip()]
+    ignore_from = [x.strip().lower() for x in sec.get("ignore_from", "").split(",") if x.strip()]
+    skip_bulk = sec.get("skip_bulk", "yes").lower() in ("yes", "da", "true", "1")
     try:
         box = imaplib.IMAP4_SSL(sec["imap_host"], int(sec.get("imap_port", "993")))
         box.login(sec["imap_user"], sec["imap_password"])
-        typ, data = box.select('"' + folder + '"', readonly=True)
-        if typ != "OK":
-            log.error("IMAP folder %s ne postoji", folder)
-            box.logout()
-            return
-        uidvalidity = box.response("UIDVALIDITY")[1][0]
-        uidvalidity = uidvalidity.decode() if isinstance(uidvalidity, bytes) else str(uidvalidity)
-        if seen.get("uidvalidity") != uidvalidity:
-            seen = {"uidvalidity": uidvalidity, "last_uid": 0}
-        since = (datetime.now() - timedelta(days=int(sec.get("since_days", "3")))).strftime("%d-%b-%Y")
-        typ, data = box.uid("search", None, "SINCE", since)
-        uids = [int(u) for u in (data[0] or b"").split()]
-        new = [u for u in uids if u > int(seen.get("last_uid", 0))]
-        if not seen.get("last_uid") and sec.get("skip_existing", "yes").lower() in ("yes", "da", "true", "1"):
-            # First run: start from now, don't import the whole folder.
-            seen["last_uid"] = max(uids) if uids else 0
-            new = []
-            log.info("IMAP: početak praćenja foldera %s (postojeći emailovi preskočeni)", folder)
-        for uid in sorted(new):
-            typ, msgdata = box.uid("fetch", str(uid), "(BODY.PEEK[])")
-            if typ != "OK" or not msgdata or not isinstance(msgdata[0], tuple):
-                continue
-            msg = email.message_from_bytes(msgdata[0][1])
-            payload = {
-                "from": header(msg, "From"),
-                "subject": header(msg, "Subject"),
-                "date": header(msg, "Date"),
-                "messageId": header(msg, "Message-ID") or f"imap-{uidvalidity}-{uid}",
-                "text": body_text(msg)[:20000],
-            }
-            status, body = post(inbound, json.dumps(payload).encode("utf-8"), {"Content-Type": "application/json"})
-            if status == 200:
-                log.info("Email poslan u prijem: %s", payload["subject"][:80])
-                seen["last_uid"] = uid
-            else:
-                log.error("Email nije poslan (%s): %s", status, body)
-                break
+        for folder in folders:
+            try:
+                sync_folder(box, sec, folder, state, inbound, ignore_from, skip_bulk)
+            except Exception as e:
+                log.error("IMAP folder %s: %s", folder, e)
         box.logout()
     except Exception as e:
         log.error("IMAP greška: %s", e)
-    state[key] = seen
 
 
 def main():

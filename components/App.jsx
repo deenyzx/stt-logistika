@@ -229,7 +229,7 @@ function NotificationsPopover({ onClose }) {
           <span className="ndot" />
           <span className="stack grow" style={{ gap: 2 }}>
             <span style={{ fontWeight: n.at > lastRead ? 600 : 400, fontSize: 15, lineHeight: '21px' }}>{n.title}</span>
-            {n.body ? <span className="small muted">{n.body}</span> : null}
+            {n.body ? <span className="small muted nbody">{n.body}</span> : null}
             <span className="small muted">{fmtWhen(n.at)}</span>
           </span>
         </button>

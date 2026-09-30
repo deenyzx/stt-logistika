@@ -2,12 +2,12 @@ import { NextResponse } from 'next/server';
 import { sessionFromRequest } from './lib/auth.js';
 
 // Everything needs a signed-in session, except the login page, the service worker/manifest and the integrations
-// (WooCommerce, email, the office agent), which check their own secrets.
+// (WooCommerce, email, the office agent) and the daily cron, which check their own secrets.
 const OPEN = new Set(['/login', '/api/login', '/api/logout', '/sw.js', '/manifest.webmanifest']);
 
 export async function proxy(req) {
   const { pathname } = req.nextUrl;
-  if (OPEN.has(pathname) || pathname.startsWith('/api/integrations/')) return NextResponse.next();
+  if (OPEN.has(pathname) || pathname.startsWith('/api/integrations/') || pathname.startsWith('/api/cron/')) return NextResponse.next();
   if (await sessionFromRequest(req)) return NextResponse.next();
   if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   const url = req.nextUrl.clone();
