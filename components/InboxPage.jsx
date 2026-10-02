@@ -6,12 +6,13 @@ import { useMemo, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
 import { Icon, Button, Segmented, Sheet, Tag, Comments, Empty, Note, cx } from '@/components/ui.jsx';
-import { INBOX_KIND, isOpenTask } from '@/lib/constants.js';
+import ShopOrderPanel from '@/components/ShopOrder.jsx';
+import { INBOX_KIND, isOpenTask, can } from '@/lib/constants.js';
 import { fmtWhen, fmtMoney, fmtQty, fold, preview, taskDate, fmtDate } from '@/lib/format.js';
 
 export function KindTag({ item }) {
   const k = INBOX_KIND[item.kind || (item.source === 'web' ? 'narudzba' : 'upit')];
-  return <Tag tone={k.tone} icon={k.icon}>{item.source === 'web' ? 'Web narudžba' : k.label}</Tag>;
+  return <Tag tone={k.tone} icon={k.icon}>{item.source === 'web' ? (item.shopName || 'Web narudžba') : k.label}</Tag>;
 }
 
 const STATUS_TAG = {
@@ -56,8 +57,8 @@ export function InboxActions({ item, compact, onAttach }) {
           </>
         ) : (
           <>
-            <Button size={size} busy={busy === 'resolve'} onClick={() => act('resolve')}>Riješeno</Button>
-            {!compact ? <Button size={size} icon="tasks" busy={busy === 'acceptzadatak'} onClick={() => act('accept', { as: 'zadatak' })}>Napravi zadatak</Button> : null}
+            <Button variant="primary" size={size} icon={compact ? undefined : 'tasks'} busy={busy === 'acceptzadatak'} onClick={() => act('accept', { as: 'zadatak' })}>Napravi zadatak</Button>
+            {!compact ? <Button size={size} icon="cart" busy={busy === 'acceptnarudzba'} onClick={() => act('accept', { as: 'narudzba' })}>Nova narudžba</Button> : null}
             <Button size={size} variant="quiet" busy={busy === 'dismiss'} onClick={() => act('dismiss')}>Odbaci</Button>
           </>
         )}
@@ -126,9 +127,22 @@ function AttachPicker({ item, onClose }) {
 }
 
 export default function InboxPage() {
-  const { data, me, route, go } = useApp();
+  const { data, me, route, go, reload, toast } = useApp();
   const [status, setStatus] = useState('novo');
   const [kind, setKind] = useState('sve');
+  const [syncing, setSyncing] = useState(false);
+  const canSync = can(me.role, 'webshop') && (data.shops || []).some((s) => s.api);
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      const r = await api('POST', '/api/shops/sync');
+      const added = r.result.reduce((n, x) => n + (x.added || 0), 0);
+      const errs = r.result.filter((x) => x.error);
+      toast(errs.length ? errs.map((x) => x.error).join(' ') : added ? `Dodano ${added} ${added === 1 ? 'narudžba' : 'narudžbi'} iz shopova.` : 'Nema novih narudžbi u shopovima.', { error: !!errs.length });
+      reload();
+    } catch (e) { toast(e.message, { error: true }); }
+    setSyncing(false);
+  };
   const kindOf = (x) => x.kind || (x.source === 'web' ? 'narudzba' : 'upit');
   const inStatus = data.inbox.filter((x) => status === 'sve' || x.status === status);
   const list = inStatus.filter((x) => kind === 'sve' || kindOf(x) === kind);
@@ -138,13 +152,15 @@ export default function InboxPage() {
 
   return (
     <main className="page">
-      <PageHead title="Prijem" lead="Web narudžbe iz WordPressa i emailovi. Narudžbe prihvati, a email kupca pretvori u zadatak ili ga dodaj narudžbi na koju se odnosi.">
+      <PageHead title="Prijem" lead="Sve što stigne sa sajtova i emailom. Ti biraš šta postaje narudžba ili zadatak: narudžbu prihvati, a email pretvori u zadatak ili ga dodaj narudžbi na koju se odnosi.">
+        {canSync ? <Button icon="sync" busy={syncing} onClick={sync}>Provjeri shopove</Button> : null}
         <Segmented label="Status" value={status} onChange={setStatus} options={[
           { value: 'novo', label: 'Novo', count: data.inbox.filter((x) => x.status === 'novo').length },
           { value: 'prihvaceno', label: 'Prihvaćeno' },
           { value: 'rijeseno', label: 'Riješeno' },
           { value: 'odbaceno', label: 'Odbačeno' },
           { value: 'sve', label: 'Sve' },
+          ...((data.skipped || []).length || data.settings?.keepOther === false ? [{ value: 'preskoceno', label: 'Preskočeno', count: (data.skipped || []).length || undefined }] : []),
         ]} />
       </PageHead>
 
@@ -155,11 +171,13 @@ export default function InboxPage() {
         </Note>
       ) : null}
 
+      {status === 'preskoceno' ? <SkippedList /> : (
+      <>
       <Segmented label="Vrsta" value={kind} onChange={setKind} options={[
         { value: 'sve', label: 'Sve', count: inStatus.length },
         { value: 'narudzba', label: 'Narudžbe', count: count('narudzba') },
-        { value: 'upit', label: 'Emailovi kupaca', count: count('upit') },
-        { value: 'ostalo', label: 'Ostalo', count: count('ostalo') },
+        { value: 'upit', label: 'Upiti kupaca', count: count('upit') },
+        ...(count('ostalo') || data.settings?.keepOther ? [{ value: 'ostalo', label: 'Ostalo', count: count('ostalo') }] : []),
       ]} />
 
       <section className="card" aria-label="Lista">
@@ -186,15 +204,63 @@ export default function InboxPage() {
         )}
       </section>
 
+      </>
+      )}
+
       {selected ? <InboxDetail item={selected} onClose={() => go('prijem')} /> : null}
       {route.arg && !selected ? <Sheet title="Ne postoji" onClose={() => go('prijem')}><p>Ova stavka više nije u prijemu.</p></Sheet> : null}
     </main>
   );
 }
 
+/** Emails that didn't enter Prijem (newsletters, suppliers, robots, ignored senders). Bring one back if it matters. */
+function SkippedList() {
+  const { data, reload, toast, go } = useApp();
+  const [remember, setRemember] = useState(true);
+  const [busy, setBusy] = useState(null);
+  const list = data.skipped || [];
+  const restore = async (x, kind) => {
+    setBusy(x.id + kind);
+    try {
+      const r = await api('POST', '/api/inbox/skipped', { id: x.id, kind, remember });
+      toast(`Vraćeno u prijem${remember && x.from?.email ? `; emailovi od ${x.from.email} odsad idu pravo u ${INBOX_KIND[kind].plural}` : ''}.`);
+      reload();
+      if (r.item) go('prijem', r.item.id);
+    } catch (e) { toast(e.message, { error: true }); }
+    setBusy(null);
+  };
+  return (
+    <section className="stack" style={{ gap: 12 }}>
+      <Note icon="info">Ovi emailovi nisu ušli u prijem jer nisu narudžbe ni upiti kupaca. Ako je neki ipak bitan, vrati ga. Čuva se zadnjih 200.</Note>
+      <label className="checkrow"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /><span>Kad vratim email, zapamti pošiljaoca (njegovi emailovi odsad ulaze u prijem)</span></label>
+      <div className="card">
+        {list.length === 0 ? <Empty>Nema preskočenih emailova.</Empty> : (
+          <div className="rows">
+            {list.map((x) => (
+              <div key={x.id} className="rowlink inbox-row">
+                <div className="stack grow" style={{ gap: 4, minWidth: 260 }}>
+                  <span className="row small muted"><Icon name="mail" size={16} /><span>{x.from?.name ? `${x.from.name} <${x.from.email}>` : x.from?.email}</span><span>· {fmtWhen(x.receivedAt || x.at)}</span></span>
+                  <span className="rowlink-title">{x.title}</span>
+                  <span className="rowlink-meta nbody nbody-2">{x.preview}</span>
+                  <span className="small" style={{ color: 'var(--ink-muted)' }}><Icon name="ban" size={14} /> {x.reason}</span>
+                </div>
+                <div className="row inbox-actions">
+                  <Button size="sm" busy={busy === x.id + 'upit'} onClick={() => restore(x, 'upit')}>Upit kupca</Button>
+                  <Button size="sm" busy={busy === x.id + 'narudzba'} onClick={() => restore(x, 'narudzba')}>Narudžba</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function InboxDetail({ item: x, onClose }) {
   const { data, me, reload, toast } = useApp();
   const [busy, setBusy] = useState(false);
+  const [remember, setRemember] = useState(false);
   const addComment = async (text) => {
     try { await api('POST', '/api/comments', { kind: 'inbox', id: x.id, text }); reload(); return true; }
     catch (e) { toast(e.message, { error: true }); return false; }
@@ -205,24 +271,39 @@ function InboxDetail({ item: x, onClose }) {
   };
   const setKind = async (kind) => {
     setBusy(true);
-    try { await api('POST', '/api/inbox/' + x.id, { action: 'kind', kind }); toast('Premješteno: ' + INBOX_KIND[kind].plural); reload(); }
-    catch (e) { toast(e.message, { error: true }); }
+    try {
+      await api('POST', '/api/inbox/' + x.id, { action: 'kind', kind, remember });
+      toast('Premješteno: ' + INBOX_KIND[kind].plural + (remember ? `. Isto i za sve buduće emailove od ${x.from.email}.` : ''));
+      reload();
+    } catch (e) { toast(e.message, { error: true }); }
     setBusy(false);
+  };
+  const ignoreSender = async () => {
+    if (!confirm(`Nikad više ne prikazivati emailove od ${x.from.email}? (Idu u Preskočeno; pravilo se može obrisati u Postavkama.)`)) return;
+    try { await api('POST', '/api/inbox/' + x.id, { action: 'ignoreSender' }); toast('Emailovi od ' + x.from.email + ' se više ne prikazuju.'); reload(); onClose(); }
+    catch (e) { toast(e.message, { error: true }); }
   };
   const o = x.order;
   const kind = x.kind || (x.source === 'web' ? 'narudzba' : 'upit');
   return (
-    <Sheet title={x.source === 'web' ? 'Web narudžba' + (o?.number ? ' #' + o.number : '') : 'Email'} onClose={onClose} wide>
+    <Sheet title={x.source === 'web' ? (x.shopName || 'Web narudžba') + (o?.number ? ' #' + o.number : '') : 'Email'} onClose={onClose} wide>
       <div className="row">
         {STATUS_TAG[x.status]}
         {x.source === 'web' ? <KindTag item={x} /> : null}
         <span className="small muted">{fmtWhen(x.receivedAt)}</span>
       </div>
       <h2 className="h-title">{x.title}</h2>
+      {x.rule ? <p className="small muted">Razvrstano pravilom: sadrži „{x.rule.contains}”</p> : null}
       {x.source !== 'web' ? (
         <div className="field">
           <span className="field-label">Vrsta emaila</span>
           <Segmented label="Vrsta emaila" value={kind} onChange={(k) => !busy && k !== kind && setKind(k)} options={Object.entries(INBOX_KIND).map(([value, k]) => ({ value, label: k.label }))} />
+          {x.from?.email ? (
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <label className="checkrow small"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /><span>Zapamti za sve emailove od {x.from.email}</span></label>
+              <button type="button" className="btn btn-quiet btn-sm" onClick={ignoreSender}>Nikad od ovog pošiljaoca</button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <dl className="dl">
@@ -246,10 +327,11 @@ function InboxDetail({ item: x, onClose }) {
         </div>
       ) : null}
       {o?.customerNote ? <Note icon="chat">Napomena kupca: {o.customerNote}</Note> : null}
+      {o?.note ? <Note tone="accent" icon="phone">{o.note}</Note> : null}
+      {x.source === 'web' ? <ShopOrderPanel inboxId={x.id} shopName={x.shopName} /> : null}
       {!o && x.body ? <div className={cx('well')} style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: '22px', maxHeight: 420, overflowY: 'auto' }}>{x.body}</div> : null}
       <div className="row">
         <InboxActions item={x} />
-        {o?.url ? <a className="btn btn-quiet" href={o.url} target="_blank" rel="noreferrer">Otvori u WooCommerce<Icon name="external" size={16} /></a> : null}
         {x.from?.email && !o ? <a className="btn btn-quiet" href={'mailto:' + x.from.email + '?subject=' + encodeURIComponent('Re: ' + x.title)}>Odgovori emailom<Icon name="external" size={16} /></a> : null}
       </div>
       <Comments comments={x.comments} me={me} users={data.users} onAdd={addComment} onDelete={delComment} />

@@ -9,12 +9,13 @@ What it does:
   - **Brzi unos (quick entry):** for orders taken by phone or in person. Type what was ordered, who, and the phone number. The order is marked **Dopuniti** until you fill in the rest and press *Sve je upisano*.
   - **Roba stiže (arrival date):** for goods you're waiting on. Orders with an arrival date show on Pregled under *Roba stiže*, and the morning reminder lists what arrives that day or is late.
   - **Prati (watch):** follow any order to be notified about its status, arrival date and comments, even if it isn't yours.
-- **Prijem (inbox):** WordPress/WooCommerce orders and emails arrive here by themselves, sorted into three kinds:
+- **Prijem (inbox):** orders from the web shops (KupiLenovo, KupiTelevizor, …) and the company's emails arrive here by themselves. Nothing turns into a task on its own: **you choose** which ones to take. They are grouped into three tabs:
   - **Narudžbe (orders):** web shop orders and emails that are orders. **Prihvati kao narudžbu** makes an order with everything filled in: customer, phone, email, address, items, payment, delivery, total, and the day it was ordered. An order that came by email is marked *Dopuniti*, because the details are in the text.
-  - **Emailovi kupaca (customers' emails):** questions, quote requests, "when does my order arrive". **Napravi zadatak** makes a task "Odgovoriti: …". **Dodaj u narudžbu** puts the email on the order it is about (orders from the same sender are suggested first). **Riješeno** marks it done.
-  - **Ostalo (other):** anything automatic. No notification.
+  - **Upiti kupaca (customers' emails):** questions, quote requests, "when does my order arrive". **Napravi zadatak** makes a task "Odgovoriti: …". **Dodaj u narudžbu** puts the email on the order it is about (orders from the same sender are suggested first). **Riješeno** marks it done.
+  - **Ostalo (other):** newsletters, automatic and internal mail. No notification, but still there: **Napravi zadatak** works on any email.
   
-  Sorting is automatic and can be changed per email. When WooCommerce also sends its own "Nova narudžba #…" email, it is matched to the web order and not shown twice.
+  The tab is picked by simple keywords and can be changed per email ("remember for all emails from this sender" makes it permanent). When the shop also sends its own "Nova narudžba #…" email, it is matched to the web order and not shown twice. See *Which emails reach Prijem* below.
+- **Web shop orders, live:** an order from a shop shows its current status in that shop. With the shop's API key you can **change the status** (e.g. *U obradi → Završeno*, or the shop's own statuses like *Poslano*) and add a note, optionally emailed to the customer by the shop, without opening WordPress. This is on the order in Prijem and on the task made from it.
 - **Rezervacije (laptop reservations):** each reservation records who made it (name and department), who it is for, the purpose, the payment type (cash, card, bank transfer, credit/instalments, cash on delivery…), the deposit, a "reserved until" date, and comments. Every new reservation notifies both departments.
 - **Zalihe (stock):** upload the CSV your PDF scraper produces from the EKI EDI invoices, or let the office agent upload it. The app compares it with the previous export and lists what changed: quantity changes, new articles, and articles that disappeared. Tick each row once the web shop is updated.
 - **Comments everywhere:** on orders, reservations, inbox items and stock exports. Writing `@Ime` notifies that colleague.
@@ -26,33 +27,42 @@ What it does:
 
 ## Integrations: what is possible and what is built
 
-### WooCommerce orders → built
+### Web shops (WooCommerce) → built. One entry per shop.
 
-WooCommerce can call the app the moment an order is placed. This is a *webhook*: real-time and free.
+Each shop (KupiLenovo, KupiTelevizor, …) is added by the admin in **Postavke → Web shopovi**: its name (as in the email subject, `[KupiTelevizor] Nova narudžba …`), its address, and a REST API key. Orders reach the app in up to three ways, and all three land on the same item (matched by shop and order number):
 
-1. In Vercel, set `WOO_WEBHOOK_SECRET` to a long random string.
-2. In WordPress, go to WooCommerce → Postavke/Settings → Napredno/Advanced → Webhooks → *Add webhook*:
-   - Status: Active
-   - Topic: **Order created**
-   - Delivery URL: `https://<your-domain>/api/integrations/woocommerce`
-   - Secret: the same `WOO_WEBHOOK_SECRET`
-   - API version: WP REST API v3
-3. Optionally add a second webhook with the topic **Order updated** (same URL and secret). It refreshes the status of orders that are already in Prijem and never creates new items.
+1. **The shop's "Nova narudžba" email**, through the email connection below. Works with no setup in WordPress. The app reads the whole email: customer, phone, email, address, items with codes, prices, delivery, total, VAT, payment and the note.
+2. **A webhook** (instant): in the shop's WordPress, WooCommerce → Postavke → Napredno → Webhooks → *Dodaj webhook*. Status *Aktivan*, topic **Narudžba kreirana** (Order created), API version WP REST API v3, and the delivery URL and secret shown for that shop in Postavke → Web shopovi. A second webhook with the topic **Narudžba ažurirana** (Order updated) keeps the status up to date.
+3. **The REST API**, which also lets the app *change* the order: WooCommerce → Postavke → Napredno → REST API → *Dodaj ključ*, permissions **Čitanje/Pisanje** (Read/Write). Copy the Consumer key (`ck_…`) and Consumer secret (`cs_…`) straight away (WooCommerce shows them once) and paste them into the shop in Postavke. *Provjeri vezu* tests the key and lists the shop's statuses, custom ones included. With the key, the morning job also pulls in the last three days of orders in case a webhook or email was missed, and **Prijem → Provjeri shopove** does it on demand.
 
-The app checks WooCommerce's signature on every call, so nobody else can post fake orders. In Postavke → Zalihe i web shop you can make web orders skip Prijem and become orders straight away.
+The key is stored only on the server and never sent to the browser. Status changes are written to the shop's order notes with the colleague's name (e.g. *Status promijenjen u Poslano (Din)*), and they are logged on the task. Only Administrator and Veleprodaja can change shop orders (`ACCESS.webshop` in `lib/constants.js`).
 
-*Possible next step (not built):* after you tick the stock changes, the app could also write the new quantities to WooCommerce through its REST API, matching products by SKU. That needs a WooCommerce API key with write access to the live shop, so I left it out. Say the word if you want it.
+The app checks WooCommerce's signature on every webhook call, so nobody else can post fake orders. In Postavke → Zalihe i web shop you can make web orders skip Prijem and become orders straight away. A single shop can still be set up the old way with env variables (`WOO_URL`, `WOO_CONSUMER_KEY`, `WOO_CONSUMER_SECRET`, `WOO_WEBHOOK_SECRET`, `WOO_SHOP_NAME`, webhook URL without `?shop=`).
+
+*Possible next step (not built):* after you tick the stock changes, the app could write the new quantities to the shop through the same API key, matching products by SKU. Say the word if you want it.
 
 ### Company email → built (the receiving side). You choose how mail gets to it.
 
-The app has an address that accepts emails and puts them in Prijem. There they are sorted into orders, customers' emails and other mail, and you turn them into orders or tasks. There are two ways to feed it, depending on where the company mailbox is hosted:
+The app has an address that accepts emails and puts them in Prijem, where you choose which ones become orders or tasks. There are two ways to feed it, depending on where the company mailbox is hosted:
 
-- **A. The office agent reads the mailbox over IMAP (recommended if the mail is on cPanel/hosting mail).** Put the IMAP details in the agent's `config.ini`. By default it reads `INBOX`, and `folders` takes several folders separated by commas. It checks every minute and sends new emails over. It skips newsletters, mailing lists and automatic replies, plus any senders listed in `ignore_from`. No outside service and no cost, but the office PC has to be on.
+- **A. The office agent reads the mailbox over IMAP (recommended if the mail is on cPanel/hosting mail).** Put the IMAP details in the agent's `config.ini`. By default it reads `INBOX`, and `folders` takes several folders separated by commas. It checks every minute and sends new emails over, skipping only senders listed in `ignore_from` (and newsletters, if you set `skip_bulk = yes`). No outside service and no cost, but the office PC has to be on.
   - Gmail/Google Workspace: IMAP works with an *app password* (requires 2-step verification).
   - Microsoft 365/Outlook.com: Microsoft switched off password login for IMAP, so this route does not work there. Use B.
 - **B. Forward to an inbound-email service.** Set up a forwarding rule for order emails to an inbound address at Postmark, Mailgun or SendGrid (all offer a small free tier), or use a Make/Zapier "new email → webhook" scenario. Point it at `https://<your-domain>/api/integrations/email/<EMAIL_INBOUND_SECRET>`. The endpoint understands Postmark, Mailgun and SendGrid payloads, as well as plain JSON `{ from, subject, text }`.
 
 Set `EMAIL_INBOUND_SECRET` to a long random string first. The admin sees the full address in Postavke → Integracije.
+
+#### Which emails reach Prijem
+
+Everything that arrives goes into Prijem, and you decide. To keep it tidy:
+
+1. **Feed it only the mail that matters.** Best done at the mailbox: point the agent at the addresses or folders that customers and the shops write to (`folders = INBOX, Narudzbe`), or forward only those to option B. A mailbox rule like "from `@kupilenovo.ba`/`@kupitelevizor.ba` or to `prodaja@` → folder *Narudzbe*" works in every mail program.
+2. **Shop order emails** are always recognised and become full web orders, whatever the rules say.
+3. **Your rules** in Postavke → Email: *sender / recipient / subject / text contains …* → Narudžba, Upit kupca, Ostalo or Ignoriši. Write word stems (`ponud`, `narudžb`, `cijen`) to catch every case ending; separate alternatives with commas; case and diacritics don't matter. The first matching rule wins.
+4. **From Prijem:** move an email to another tab and tick *Zapamti za sve emailove od …*, or press *Nikad od ovog pošiljaoca*. Both create a rule.
+5. **Ignored mail** waits in Prijem → *Preskočeno* (the last 200), where it can be brought back with one click. Postavke → Email can also send all of *Ostalo* there instead of Prijem.
+
+No email is read by any outside service or AI.
 
 ### EKI EDI invoices → built as an office agent. Worth asking the vendor about more.
 
@@ -83,7 +93,7 @@ How the comparison works: rows are matched on the article code, and rows with th
    | `ADMIN_PASSWORD` | Its password. This account always works and cannot be locked out. |
    | `ADMIN_NAME` | Name shown for the admin, e.g. `Din`. |
    | `SESSION_SECRET` | Long random string; signs the login cookie. Changing it logs everyone out. |
-   | `WOO_WEBHOOK_SECRET` | Same secret as in the WooCommerce webhook. |
+   | `WOO_*` | Optional. Shops are added in Postavke → Web shopovi; these are only for setting up one shop through Vercel instead. |
    | `EMAIL_INBOUND_SECRET` | Secret part of the email address (at least 16 characters). |
    | `STOCK_AGENT_TOKEN` | Token the office agent sends (at least 16 characters). |
    | `CRON_SECRET` | Long random string. Turns on the morning reminder: Vercel calls `/api/cron/daily` once a day (set in `vercel.json`, about 7:00 in Sarajevo) and sends this secret. |
@@ -137,6 +147,9 @@ Without Redis variables the app keeps data in memory (lost on restart, not share
 | `lib/domain.js` | The rules: orders, reservations, comments, Prijem, stock imports, and who gets which notification. |
 | `lib/csv.js` | Reads the scraper's CSV (delimiter, header and column detection) and compares two exports. |
 | `lib/integrations.js` | WooCommerce signature check and order mapping; email payloads from Postmark/Mailgun/SendGrid/JSON. |
+| `lib/shops.js` | The web shops and the WooCommerce REST API: read an order, change its status, notes, recent orders. |
+| `lib/wooEmail.js` | Reads a shop's "Nova narudžba" email (plain text or HTML) into a full order. |
+| `lib/emailRules.js` | The admin's email rules. |
 | `lib/store.js` | Redis storage. Each save checks the item's revision, so two people saving the same order at once never overwrite each other. `stt:ver` is bumped on every write so the browser's poll is one read. |
 | `lib/auth.js`, `lib/users.js` | PBKDF2 password hashes, signed session cookie, accounts. Changing a password or role ends that person's old sessions. |
 | `lib/notify.js` | Saved notifications (the bell) and Web Push to subscribed devices. |

@@ -169,7 +169,8 @@ def header(msg, name):
     return "".join(parts).strip()
 
 
-def body_text(msg):
+def body_parts(msg):
+    """The plain-text and the HTML part of an email (either may be None)."""
     plain, html = None, None
     for part in msg.walk() if msg.is_multipart() else [msg]:
         if part.get_content_maintype() == "multipart" or part.get("Content-Disposition", "").startswith("attachment"):
@@ -185,6 +186,11 @@ def body_text(msg):
             plain = text
         elif part.get_content_type() == "text/html" and html is None:
             html = text
+    return plain, html
+
+
+def body_text(msg):
+    plain, html = body_parts(msg)
     if plain:
         return plain.strip()
     if html:
@@ -237,12 +243,16 @@ def sync_folder(box, sec, folder, state, inbound, ignore_from, skip_bulk):
         if skip_bulk and is_bulk(msg) and not ORDER_WORDS.search(subject):
             log.info("Preskočeno (newsletter/automatski): %s", subject[:80])
             continue
+        plain, html = body_parts(msg)
         payload = {
             "from": sender,
+            "to": header(msg, "To"),
             "subject": subject,
             "date": header(msg, "Date"),
             "messageId": header(msg, "Message-ID") or f"imap-{uidvalidity}-{uid}",
             "text": body_text(msg)[:20000],
+            # The app reads shop order emails (tables) best from the HTML.
+            "html": (html or "")[:100000] if not plain else "",
             "bulk": is_bulk(msg),
         }
         status, body = post(inbound, json.dumps(payload).encode("utf-8"), {"Content-Type": "application/json"})
@@ -265,7 +275,7 @@ def sync_email(cfg, state):
         return
     folders = [f.strip() for f in (sec.get("folders") or sec.get("folder") or "INBOX").split(",") if f.strip()]
     ignore_from = [x.strip().lower() for x in sec.get("ignore_from", "").split(",") if x.strip()]
-    skip_bulk = sec.get("skip_bulk", "yes").lower() in ("yes", "da", "true", "1")
+    skip_bulk = sec.get("skip_bulk", "no").lower() in ("yes", "da", "true", "1")
     try:
         box = imaplib.IMAP4_SSL(sec["imap_host"], int(sec.get("imap_port", "993")))
         box.login(sec["imap_user"], sec["imap_password"])

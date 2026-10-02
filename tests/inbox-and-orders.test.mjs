@@ -46,7 +46,7 @@ test('a web order notifies with everything the shop sent', async () => {
   const r = await d.addInbox(wooOrderToInbox(woo, 'https://shop.example.ba'));
   assert.equal(r.item.kind, 'narudzba');
   const n = await latest(din, 'inbox_web');
-  assert.match(n.title, /Web narudžba #3001 · 1\.798,00 KM/);
+  assert.match(n.title, /#3001 · 1\.798,00 KM/);
   for (const part of ['Mirza T.', 'Sarajevo', '066 777 888', '2× Lenovo IdeaPad Slim 3', 'Plaćanje pouzećem', 'Brza pošta', 'Zvati prije dostave']) {
     assert.ok(n.body.includes(part), 'missing ' + part + ' in ' + n.body);
   }
@@ -82,7 +82,7 @@ test("a customer's email: a task to answer it, or added to the order it is about
   const q = await d.addInbox(emailToInbox({ from: 'Nabavka <nabavka@skola.ba>', subject: 'Upit za 15 laptopa', text: 'Pozdrav, trebamo ponudu.\nTel: 033 123 456', messageId: 'q1' }));
   assert.equal(q.item.kind, 'upit');
   const n = await latest(din, 'inbox_email_msg');
-  assert.match(n.title, /^Email kupca: Upit za 15 laptopa/);
+  assert.match(n.title, /^Upit kupca: Upit za 15 laptopa/);
   assert.match(n.body, /Od: Nabavka <nabavka@skola.ba> · 033 123 456/);
   const { task } = await d.acceptInbox(q.item.id, din);
   assert.equal(task.type, 'zadatak');

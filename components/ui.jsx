@@ -7,7 +7,7 @@ import {
   LogOut, Sun, Moon, Store, Hourglass, CircleCheck, CircleAlert, Info, Send, FileText, Pencil, Ellipsis, Lock, KeyRound,
   RefreshCw, CloudOff, CirclePlus, Ban, Undo2, Link as LinkIcon, Copy, ExternalLink, Calendar, Minus, Download, Receipt,
   Building2, History, Save, CheckCheck, Archive, BellOff, Smartphone, Plug, ShoppingCart, BellRing, MapPin, Paperclip,
-  PhoneIncoming, PackageCheck,
+  PhoneIncoming, PackageCheck, Filter,
 } from 'lucide-react';
 import { initials, fmtWhen } from '@/lib/format.js';
 import { TASK_STATUS, RES_STATUS, SOURCES } from '@/lib/constants.js';
@@ -24,7 +24,7 @@ const ICONS = {
   undo: Undo2, link: LinkIcon, copy: Copy, external: ExternalLink, calendar: Calendar, minus: Minus, download: Download,
   receipt: Receipt, building: Building2, history: History, save: Save, checkall: CheckCheck, archive: Archive,
   belloff: BellOff, phonebig: Smartphone, plug: Plug, cart: ShoppingCart, bellring: BellRing, pin: MapPin, attach: Paperclip,
-  quick: PhoneIncoming, arrived: PackageCheck,
+  quick: PhoneIncoming, arrived: PackageCheck, filter: Filter,
 };
 
 export function Icon({ name, size = 20, className, label, strokeWidth = 2 }) {

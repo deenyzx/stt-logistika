@@ -25,7 +25,7 @@ export async function GET(req) {
     notifications,
     push: { enabled: pushEnabled(), publicKey: pushPublicKey() },
     integrations: {
-      woo: !!process.env.WOO_WEBHOOK_SECRET,
+      woo: (data.shops || []).some((s) => s.webhook || s.api) || !!process.env.WOO_WEBHOOK_SECRET,
       email: !!process.env.EMAIL_INBOUND_SECRET,
       agent: !!process.env.STOCK_AGENT_TOKEN,
       cron: (process.env.CRON_SECRET || '').length >= 16,

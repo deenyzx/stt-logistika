@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
+import ShopOrderPanel from '@/components/ShopOrder.jsx';
 import {
   Icon, Button, Segmented, Chips, Input, Textarea, Select, Sheet, StatusTag, SourceChip, Tag, Comments, Empty, Note, useMedia, cx,
 } from '@/components/ui.jsx';
@@ -348,10 +349,10 @@ export function TaskDetail({ task: t, onEdit }) {
       ) : null}
 
       {t.note ? <div className="well" style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: '22px' }}>{t.note}</div> : null}
-      {t.links?.inboxId || t.links?.wooUrl ? (
+      {t.source === 'web' && (t.links?.shopId || t.links?.shopName || t.links?.inboxId) ? <ShopOrderPanel taskId={t.id} shopName={t.links?.shopName} /> : null}
+      {t.links?.inboxId ? (
         <div className="row">
-          {t.links?.inboxId ? <Button size="sm" icon="inbox" onClick={() => go('prijem', t.links.inboxId)}>Original iz prijema</Button> : null}
-          {t.links?.wooUrl ? <a className="btn btn-sm btn-quiet" href={t.links.wooUrl} target="_blank" rel="noreferrer">Otvori u WooCommerce<Icon name="external" size={16} /></a> : null}
+          <Button size="sm" icon="inbox" onClick={() => go('prijem', t.links.inboxId)}>Original iz prijema</Button>
         </div>
       ) : null}
 

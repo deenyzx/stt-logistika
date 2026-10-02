@@ -1,10 +1,12 @@
 'use client';
-// Postavke: your account, theme, push on this device; for the admin also users, integrations, stock columns, export.
+// Postavke: your account, theme, push on this device; for the admin also users, web shops, email sorting rules,
+// integrations, stock columns, export.
 import { useEffect, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
 import { Icon, Button, Segmented, Input, Select, Sheet, Tag, Note, Avatar } from '@/components/ui.jsx';
 import { ROLES, DEPTS, NOTIF_CATS, can } from '@/lib/constants.js';
+import { RULE_FIELDS, RULE_ACTIONS } from '@/lib/emailRules.js';
 
 function b64ToUint8(b64) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -23,7 +25,7 @@ export default function SettingsPage() {
       <Account />
       <Push />
       <NotifPrefs />
-      {me.role === 'admin' ? <><Users /><Integrations /><StockSettings /><ExportData /></> : null}
+      {me.role === 'admin' ? <><Users /><Shops /><EmailSorting /><Integrations /><StockSettings /><ExportData /></> : null}
     </main>
   );
 }
@@ -260,6 +262,190 @@ function UserForm({ user, onClose, onDone }) {
   );
 }
 
+function Shops() {
+  const { data, reload, toast } = useApp();
+  const [form, setForm] = useState(null);
+  const [testing, setTesting] = useState(null);
+  const [result, setResult] = useState({});
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+  const test = async (shop, quiet) => {
+    setTesting(shop.id);
+    try {
+      const r = await api('POST', '/api/shops/test', { id: shop.id });
+      const text = `Veza radi. ${r.lastOrder ? 'Zadnja narudžba #' + r.lastOrder.number + '.' : 'Još nema narudžbi.'} Statusi: ${r.statuses.map((x) => x.name).join(', ')}.`;
+      setResult((x) => ({ ...x, [shop.id]: { ok: true, text } }));
+      if (quiet) toast(shop.name + ': veza radi');
+    } catch (e) {
+      setResult((x) => ({ ...x, [shop.id]: { ok: false, text: e.message } }));
+      if (quiet) toast(e.message, { error: true });
+    }
+    setTesting(null);
+  };
+  const done = (shop) => { setForm(null); reload(); if (shop?.api) test(shop, true); };
+
+  return (
+    <Section id="shopovi" title="Web shopovi">
+      <p className="muted">Za svaki WooCommerce shop (KupiLenovo, KupiTelevizor…): <strong>API ključ</strong> da se iz aplikacije vidi i mijenja status narudžbe, i <strong>webhook</strong> da nova narudžba stigne odmah. Narudžbe stižu i preko emaila „Nova narudžba”, pa radi i dok webhook nije podešen.</p>
+      {data.shops.length ? data.shops.map((sh) => (
+        <div className="shop-row" key={sh.id}>
+          <div className="row" style={{ gap: 10 }}>
+            <Icon name="globe" size={20} />
+            <div className="stack grow" style={{ minWidth: 160 }}>
+              <strong>{sh.name}</strong>
+              <span className="small muted">{sh.url || 'adresa nije upisana'}{sh.env ? ' · iz Vercela' : ''}</span>
+            </div>
+            {sh.api ? <Tag tone="ok" icon="key">API {sh.keyHint}</Tag> : <Tag tone="wait" icon="key">Bez API ključa</Tag>}
+            {sh.api ? <Button size="sm" icon="plug" busy={testing === sh.id} onClick={() => test(sh)}>Provjeri vezu</Button> : null}
+            {!sh.env ? <Button size="sm" icon="edit" onClick={() => setForm(sh)}>Uredi</Button> : null}
+          </div>
+          {result[sh.id] ? <Note tone={result[sh.id].ok ? 'ok' : 'danger'} icon={result[sh.id].ok ? 'ok' : 'alert'}>{result[sh.id].text}</Note> : null}
+          <details className="more">
+            <summary><Icon name="link" size={16} />Webhook za nove narudžbe</summary>
+            <div className="stack" style={{ gap: 8, paddingTop: 8 }}>
+              <p className="small muted">U WordPressu ovog shopa: WooCommerce → Postavke → Napredno → Webhooks → Dodaj webhook. Status: Aktivan, Tema: „Narudžba kreirana”, API verzija: WP REST API v3. Adresa za isporuku:</p>
+              <CopyRow value={origin + sh.webhookPath} />
+              <p className="small muted">Tajna:</p>
+              {sh.webhookSecret ? <CopyRow value={sh.webhookSecret} /> : <p className="small">WOO_WEBHOOK_SECRET iz Vercela</p>}
+              <p className="small muted">Ako želiš da se ovdje vidi i kad neko promijeni status u shopu, dodaj još jedan isti webhook s temom „Narudžba ažurirana”.</p>
+            </div>
+          </details>
+        </div>
+      )) : <Note icon="globe">Još nema shopova. Dodaj KupiLenovo, KupiTelevizor i ostale.</Note>}
+      <div><Button variant="primary" icon="plus" onClick={() => setForm('new')}>Dodaj shop</Button></div>
+      <details className="more">
+        <summary><Icon name="key" size={16} />Kako napraviti API ključ</summary>
+        <ol className="small steps">
+          <li>U WordPressu shopa: WooCommerce → Postavke → Napredno → REST API → Dodaj ključ.</li>
+          <li>Opis: „STT Logistika”. Korisnik: administrator shopa. Dozvole: <strong>Čitanje/Pisanje</strong> (Read/Write).</li>
+          <li>Generiši ključ i odmah kopiraj Consumer key (ck_…) i Consumer secret (cs_…): WooCommerce ih pokaže samo jednom.</li>
+          <li>Ovdje: Dodaj shop (ili Uredi), zalijepi oba i sačuvaj. Aplikacija odmah provjeri vezu.</li>
+        </ol>
+        <p className="small muted">Ključ daje pristup narudžbama, zato ga ne šalji emailom ni porukom. Čuva se samo na serveru i ne prikazuje se nikome u aplikaciji. Ako procuri, obriši ga u WooCommerce i napravi novi.</p>
+      </details>
+      {form ? <ShopForm shop={form === 'new' ? null : form} onClose={() => setForm(null)} onDone={done} /> : null}
+    </Section>
+  );
+}
+
+function ShopForm({ shop, onClose, onDone }) {
+  const { toast } = useApp();
+  const edit = !!shop;
+  const [f, setF] = useState({ name: shop?.name || '', url: shop?.url || '', key: '', secret: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const submit = async (e) => {
+    e?.preventDefault();
+    setBusy(true); setErr(null);
+    try {
+      const r = await api('POST', '/api/shops', { ...f, id: shop?.id });
+      toast(edit ? 'Sačuvano' : `${r.shop.name} je dodan`);
+      onDone(r.shop);
+    } catch (e2) { setErr(e2.message); setBusy(false); }
+  };
+  const remove = async () => {
+    if (!confirm(`Ukloniti ${shop.name} iz aplikacije? Narudžbe koje su već stigle ostaju. Webhook u WooCommerce onda obriši ili isključi.`)) return;
+    try { await api('DELETE', '/api/shops', { id: shop.id }); toast('Uklonjeno'); onDone(null); } catch (e2) { setErr(e2.message); }
+  };
+  return (
+    <Sheet title={edit ? 'Uredi: ' + shop.name : 'Novi web shop'} onClose={onClose}
+      footer={<>
+        {edit ? <Button variant="danger" icon="trash" onClick={remove} style={{ marginRight: 'auto' }}>Ukloni</Button> : null}
+        <Button onClick={onClose}>Odustani</Button>
+        <Button variant="primary" icon="check" busy={busy} onClick={submit}>{edit ? 'Sačuvaj' : 'Dodaj shop'}</Button>
+      </>}>
+      <form className="stack" style={{ gap: 16 }} onSubmit={submit}>
+        {err ? <Note tone="danger" icon="alert">{err}</Note> : null}
+        <div className="grid2">
+          <Input label="Naziv" value={f.name} onChange={(v) => set('name', v)} placeholder="Npr. KupiLenovo" disabled={edit} autoFocus={!edit} hint={edit ? undefined : 'Kao u naslovu emaila: [KupiLenovo] Nova narudžba…'} />
+          <Input label="Adresa shopa" value={f.url} onChange={(v) => set('url', v)} placeholder="https://kupilenovo.ba" inputMode="url" autoCapitalize="none" autoComplete="off" />
+        </div>
+        <Input label={edit && shop.api ? 'Consumer key (prazno = ostaje isti)' : 'Consumer key'} value={f.key} onChange={(v) => set('key', v.trim())} placeholder="ck_…" autoCapitalize="none" autoComplete="off" spellCheck={false} />
+        <Input label={edit && shop.api ? 'Consumer secret (prazno = ostaje isti)' : 'Consumer secret'} type="password" value={f.secret} onChange={(v) => set('secret', v.trim())} placeholder="cs_…" autoComplete="new-password" spellCheck={false}
+          hint="WooCommerce → Postavke → Napredno → REST API, dozvole Čitanje/Pisanje. Bez ključa narudžbe i dalje stižu, samo se status ne mijenja odavde." />
+        <button type="submit" hidden />
+      </form>
+    </Sheet>
+  );
+}
+
+const RULE_EXAMPLES = [
+  { field: 'from', contains: 'noreply, newsletter, no-reply', action: 'ignore', why: 'automatske poruke i reklame' },
+  { field: 'from', contains: '@stt.ba', action: 'ostalo', why: 'emailovi kolega; narudžbe iz shopova se svejedno prepoznaju' },
+  { field: 'from', contains: '@dobavljac.ba', action: 'ostalo', why: 'dobavljač, ne tiče se prodaje' },
+  { field: 'to', contains: 'veleprodaja@', action: 'upit', why: 'sve na adresu veleprodaje je kupac' },
+  { field: 'subject', contains: 'ponud, upit, cijen', action: 'upit', why: 'upiti za ponudu' },
+];
+
+function EmailSorting() {
+  const { data, reload, toast } = useApp();
+  const s = data.settings;
+  const [rules, setRules] = useState(() => s.emailRules || []);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!dirty) setRules(s.emailRules || []); }, [s.emailRules, dirty]);
+
+  const save = async (patch, msg) => {
+    setBusy(true);
+    try { await api('PATCH', '/api/settings', patch); toast(msg || 'Sačuvano'); if (patch.emailRules) setDirty(false); reload(); }
+    catch (e) { toast(e.message, { error: true }); }
+    setBusy(false);
+  };
+  const change = (i, k, v) => { setRules((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r))); setDirty(true); };
+  const add = (r = { field: 'from', contains: '', action: 'ignore' }) => { setRules((rs) => [...rs, { ...r, id: 'n' + Date.now().toString(36) }]); setDirty(true); };
+  const del = (i) => { setRules((rs) => rs.filter((_, j) => j !== i)); setDirty(true); };
+  const skipped = data.skipped?.length || 0;
+
+  return (
+    <Section id="email" title="Email: šta ulazi u prijem">
+      <p className="muted">Svi emailovi stižu u Prijem, a ti biraš koje ćeš prihvatiti kao narudžbu ili zadatak. Aplikacija ih samo rasporedi po karticama:</p>
+      <ol className="steps">
+        <li><strong>Narudžbe iz shopova</strong> („Nova narudžba” od KupiLenovo, KupiTelevizor…) uđu kao web narudžba, s kupcem, stavkama, dostavom i plaćanjem.</li>
+        <li><strong>Tvoja pravila</strong> ispod, ako ih napraviš. Prvo koje odgovara odlučuje.</li>
+        <li>Ostalo po riječima u emailu: <strong>Narudžbe</strong> (naručujem, narudžba…), <strong>Upiti kupaca</strong> (ponuda, cijena, imate li…) i <strong>Ostalo</strong> (newsletteri, automatski i interni emailovi; za njih nema obavijesti).</li>
+      </ol>
+      <p className="muted">Kad neki email stavi pod pogrešnu karticu, premjesti ga u prijemu i označi „Zapamti za sve emailove od…”. Iz prijema možeš i „Nikad od ovog pošiljaoca”: takvi idu u Prijem → Preskočeno{skipped ? ' (sada ' + skipped + ')' : ''}, odakle se vraćaju jednim klikom.</p>
+      <label className="checkrow">
+        <input type="checkbox" checked={s.keepOther === false} disabled={busy} onChange={(e) => save({ keepOther: !e.target.checked }, e.target.checked ? 'Ostalo ide u Preskočeno' : 'Ostalo ide u prijem')} />
+        <span>Ne stavljaj „Ostalo” u prijem (newsletteri, automatski i interni emailovi idu odmah u Preskočeno)</span>
+      </label>
+
+      <div className="stack" style={{ gap: 8 }}>
+        <span className="field-label">Pravila</span>
+        {rules.length ? rules.map((r, i) => (
+          <div className="rule-row" key={r.id}>
+            <select className="select" aria-label="Gdje" value={r.field} onChange={(e) => change(i, 'field', e.target.value)}>
+              {Object.entries(RULE_FIELDS).map(([v, l]) => <option key={v} value={v}>{l} sadrži</option>)}
+            </select>
+            <input className="input" aria-label="Sadrži" value={r.contains} onChange={(e) => change(i, 'contains', e.target.value)} placeholder="npr. @firma.ba, ponud" maxLength={120} />
+            <select className="select" aria-label="Onda" value={r.action} onChange={(e) => change(i, 'action', e.target.value)}>
+              {Object.entries(RULE_ACTIONS).map(([v, l]) => <option key={v} value={v}>→ {l}</option>)}
+            </select>
+            <button type="button" className="iconbtn" aria-label="Obriši pravilo" onClick={() => del(i)}><Icon name="trash" size={18} /></button>
+          </div>
+        )) : <p className="small muted">Još nema pravila. Prijedlozi:</p>}
+        {!rules.length ? (
+          <div className="stack" style={{ gap: 6 }}>
+            {RULE_EXAMPLES.map((x) => (
+              <button type="button" key={x.contains} className="rule-example" onClick={() => add(x)}>
+                <Icon name="plus" size={16} />
+                <span><strong>{RULE_FIELDS[x.field]}</strong> sadrži „{x.contains}” → <strong>{RULE_ACTIONS[x.action]}</strong> <span className="muted">({x.why})</span></span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <p className="small muted">Piši korijen riječi (ponud, narudžb, cijen) da pogodi sve padeže. Više riječi odvoji zarezom. Velika i mala slova i kvačice nisu bitni. Emailovi shopova se uvijek prepoznaju, pa ih pravilo „Ignoriši” ne može izgubiti.</p>
+        <div className="row">
+          <Button icon="plus" onClick={() => add()}>Dodaj pravilo</Button>
+          {dirty ? <Button variant="primary" icon="save" busy={busy} onClick={() => save({ emailRules: rules.filter((r) => r.contains.trim()) }, 'Pravila sačuvana')}>Sačuvaj pravila</Button> : null}
+          {dirty ? <Button variant="quiet" onClick={() => { setDirty(false); setRules(s.emailRules || []); }}>Poništi</Button> : null}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function CopyRow({ value }) {
   const { toast } = useApp();
   return (
@@ -281,13 +467,12 @@ function Integrations() {
   return (
     <Section id="integracije" title="Integracije">
       <div className="stack" style={{ gap: 10 }}>
-        <div className="row"><strong className="grow">WooCommerce (web shop)</strong><Status on={i.woo} /></div>
-        <p className="small muted">U WordPressu: WooCommerce → Postavke → Napredno → Webhooks → Dodaj webhook. Tema „Narudžba kreirana”, verzija API v3, tajna = WOO_WEBHOOK_SECRET iz Vercela, adresa:</p>
-        <CopyRow value={origin + '/api/integrations/woocommerce'} />
+        <div className="row"><strong className="grow">Web shopovi (WooCommerce)</strong><Status on={i.woo}>{data.shops.length === 1 ? '1 shop' : data.shops.length + ' shopa'}</Status></div>
+        <p className="small muted">Ključevi i webhookovi za svaki shop su gore, u dijelu Web shopovi.</p>
       </div>
       <div className="stack" style={{ gap: 10 }}>
         <div className="row"><strong className="grow">Email (narudžbe i emailovi kupaca)</strong><Status on={i.email} /></div>
-        <p className="small muted">Agent iz ureda čita poštu (IMAP) ili je prosljeđuje servis za dolaznu poštu (npr. Postmark). U prijemu se sami razvrstaju na narudžbe, emailove kupaca i ostalo; newsletteri se preskaču. Adresa na koju šalju{i.emailPath ? '' : ' (pojavi se kad se postavi EMAIL_INBOUND_SECRET)'}:</p>
+        <p className="small muted">Agent iz ureda čita poštu (IMAP) ili je prosljeđuje servis za dolaznu poštu (npr. Postmark). Šta od toga uđe u prijem određuje dio „Email: šta ulazi u prijem” gore. Adresa na koju šalju{i.emailPath ? '' : ' (pojavi se kad se postavi EMAIL_INBOUND_SECRET)'}:</p>
         {i.emailPath ? <CopyRow value={origin + i.emailPath} /> : null}
       </div>
       <div className="stack" style={{ gap: 10 }}>

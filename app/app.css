@@ -102,6 +102,8 @@ h1, h2, h3, h4, p { margin: 0; }
 .note-danger .ic { color: var(--danger); }
 .note-accent { background: var(--orange-soft); }
 .note-accent .ic { color: var(--orange-ink); }
+.note-ok { background: var(--ok-soft); }
+.note-ok .ic { color: var(--ok); }
 .well { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-sunken); font-size: 14px; line-height: 20px; }
 
 /* ---------- avatar ---------- */
@@ -208,6 +210,16 @@ h1, h2, h3, h4, p { margin: 0; }
 .inbox-open { all: unset; flex: 1 1 320px; min-width: 0; cursor: pointer; display: flex; flex-direction: column; gap: 6px; border-radius: 6px; }
 .inbox-open:hover .rowlink-title { text-decoration: underline; text-underline-offset: 3px; }
 .inbox-open:focus-visible { box-shadow: var(--focus-ring); }
+.shopbox { display: flex; flex-direction: column; gap: 12px; padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.shopbox .history li.is-customer { color: var(--ink); }
+.shop-row { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.shop-row:first-of-type { padding-top: 0; }
+.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.rule-example { display: flex; align-items: flex-start; gap: 8px; text-align: left; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px dashed var(--line-strong); background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 20px; cursor: pointer; }
+.rule-example:hover { background: var(--surface-sunken); }
+.rule-example > svg { margin-top: 2px; flex-shrink: 0; color: var(--orange); }
+.rule-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) 160px auto; gap: 8px; align-items: center; }
+@media (max-width: 640px) { .rule-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .rule-row > :nth-child(2) { grid-column: 1 / -1; grid-row: 1; } }
 .checkrow { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; flex-wrap: nowrap; }
 .checkrow > input { width: 22px; height: 22px; flex-shrink: 0; margin: 1px 0 0; accent-color: var(--orange); }
 .checkrow > span { flex: 1; min-width: 0; }
