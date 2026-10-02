@@ -273,7 +273,7 @@ function Shops() {
     setTesting(shop.id);
     try {
       const r = await api('POST', '/api/shops/test', { id: shop.id });
-      const text = `Veza radi. ${r.lastOrder ? 'Zadnja narudžba #' + r.lastOrder.number + '.' : 'Još nema narudžbi.'} Statusi: ${r.statuses.map((x) => x.name).join(', ')}.`;
+      const text = `Veza radi. ${r.lastOrder ? 'Zadnja narudžba #' + r.lastOrder.number + '.' : 'Još nema narudžbi.'}`;
       setResult((x) => ({ ...x, [shop.id]: { ok: true, text } }));
       if (quiet) toast(shop.name + ': veza radi');
     } catch (e) {
@@ -286,7 +286,7 @@ function Shops() {
 
   return (
     <Section id="shopovi" title="Web shopovi">
-      <p className="muted">Za svaki WooCommerce shop (KupiLenovo, KupiTelevizor…): <strong>API ključ</strong> da se iz aplikacije vidi i mijenja status narudžbe, i <strong>webhook</strong> da nova narudžba stigne odmah. Narudžbe stižu i preko emaila „Nova narudžba”, pa radi i dok webhook nije podešen.</p>
+      <p className="muted">Za svaki WooCommerce shop (KupiLenovo, KupiTelevizor…): <strong>API ključ</strong> da se u aplikaciji vidi status narudžbe i da se jednim klikom prebaci iz „Procesuiranje” u „Završeno” (ništa drugo aplikacija u shopu ne mijenja), i <strong>webhook</strong> da nova narudžba stigne odmah. Narudžbe stižu i preko emaila „Nova narudžba”, pa radi i dok webhook nije podešen.</p>
       {data.shops.length ? data.shops.map((sh) => (
         <div className="shop-row" key={sh.id}>
           <div className="row" style={{ gap: 10 }}>
@@ -321,7 +321,8 @@ function Shops() {
           <li>Generiši ključ i odmah kopiraj Consumer key (ck_…) i Consumer secret (cs_…): WooCommerce ih pokaže samo jednom.</li>
           <li>Ovdje: Dodaj shop (ili Uredi), zalijepi oba i sačuvaj. Aplikacija odmah provjeri vezu.</li>
         </ol>
-        <p className="small muted">Ključ daje pristup narudžbama, zato ga ne šalji emailom ni porukom. Čuva se samo na serveru i ne prikazuje se nikome u aplikaciji. Ako procuri, obriši ga u WooCommerce i napravi novi.</p>
+        <p className="small muted">Pisanje treba samo za promjenu statusa u „Završeno”; aplikacija ne šalje napomene, emailove ni bilo šta drugo. Ključ daje pristup narudžbama, zato ga ne šalji emailom ni porukom. Čuva se samo na serveru i ne prikazuje se nikome u aplikaciji. Ako procuri, obriši ga u WooCommerce i napravi novi.</p>
+        <Note tone="accent" icon="mail">WooCommerce sam šalje kupcu email „Narudžba završena” kad se status promijeni u Završeno, bez obzira ko ga mijenja. Ako to ne želiš: WooCommerce → Postavke → Emailovi → „Završena narudžba” → isključi.</Note>
       </details>
       {form ? <ShopForm shop={form === 'new' ? null : form} onClose={() => setForm(null)} onDone={done} /> : null}
     </Section>

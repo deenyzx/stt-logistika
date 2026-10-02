@@ -1,4 +1,4 @@
-// Email sorting (shop emails, rules, keywords, skipped) and the WooCommerce API (read and change an order),
+// Email sorting (shop emails, rules, keywords, skipped) and the WooCommerce API (read orders; Procesuiranje → Završeno),
 // against a stand-in shop. In-memory store; no real network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +24,7 @@ const shopState = {
     5202: { id: 5202, number: '5202', status: 'processing', total: '1301.00', currency: 'BAM', date_created_gmt: '2026-09-30T08:00:00', date_modified_gmt: '2026-09-30T08:00:00', billing: { first_name: 'Omer', last_name: 'Moćić', phone: '061733132', email: 'omer.mocic@gmail.com', city: 'Gradacac', address_1: 'Biberovo Polje 143' }, shipping: {}, shipping_lines: [], line_items: [{ name: 'LG NanoCell 75"', sku: '75NU800B3LA', quantity: 1, total: '1262.00', price: 1262 }] },
     5203: { id: 5203, number: '5203', status: 'pending', total: '899.00', currency: 'BAM', date_created_gmt: '2026-09-29T08:00:00', date_modified_gmt: '2026-09-29T08:00:00', billing: { first_name: 'Ana', last_name: 'K.' }, shipping: {}, shipping_lines: [], line_items: [{ name: 'Samsung 55"', sku: 'UE55', quantity: 1, total: '899', price: 899 }] },
   },
-  notes: { 5202: [] },
+  writes: [], // every request that is not a GET
 };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init = {}) => {
@@ -36,19 +36,14 @@ globalThis.fetch = async (url, init = {}) => {
   const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   if (!okAuth && !okQuery) return reply(401, { code: 'woocommerce_rest_cannot_view', message: 'Sorry, you cannot list resources.' });
   const path = u.pathname.replace('/wp-json/wc/v3', '');
+  if (init.method && init.method !== 'GET') shopState.writes.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null });
   let m;
-  if (path === '/reports/orders/totals') return reply(200, [{ slug: 'pending', name: 'Na čekanju uplate' }, { slug: 'processing', name: 'U obradi' }, { slug: 'completed', name: 'Završena' }, { slug: 'poslano', name: 'Poslano' }, { slug: 'cancelled', name: 'Otkazana' }]);
   if (path === '/orders' && init.method === 'GET') return reply(200, Object.values(shopState.orders).sort((a, b) => b.id - a.id).slice(0, Number(u.searchParams.get('per_page')) || 10));
   if ((m = path.match(/^\/orders\/(\d+)$/))) {
     const o = shopState.orders[m[1]];
     if (!o) return reply(404, { code: 'woocommerce_rest_shop_order_invalid_id', message: 'Invalid ID.' });
     if (init.method === 'PUT') Object.assign(o, JSON.parse(init.body), { date_modified_gmt: '2026-10-02T10:00:00' });
     return reply(200, o);
-  }
-  if ((m = path.match(/^\/orders\/(\d+)\/notes$/))) {
-    const list = shopState.notes[m[1]] || (shopState.notes[m[1]] = []);
-    if (init.method === 'POST') { const b = JSON.parse(init.body); const n = { id: list.length + 1, note: b.note, customer_note: b.customer_note, author: 'api', date_created_gmt: '2026-10-02T10:00:00' }; list.unshift(n); return reply(201, n); }
-    return reply(200, list);
   }
   return reply(404, { code: 'rest_no_route', message: 'No route' });
 };
@@ -89,24 +84,35 @@ test("the shop's order email becomes a full order with everything in the notific
   assert.equal((await view()).inbox.filter((x) => x.order?.number === '5202').length, 1);
 });
 
-test('read and change the order in the shop: status, note to the customer, history and notification', async () => {
+test('the only change sent to a shop: Procesuiranje → Završeno, with nothing but { status: "completed" }', async () => {
   const item = (await view()).inbox.find((x) => x.order?.number === '5202');
   const { task } = await d.acceptInbox(item.id, din);
   assert.equal(task.title.startsWith('KupiTelevizor #5202'), true);
   const info = await d.shopOrderInfo({ taskId: task.id });
   assert.equal(info.connected, true);
-  assert.equal(info.order.status, 'processing');
-  assert.equal(info.order.statusLabel, 'U obradi');
-  assert.ok(info.statuses.some((s) => s.slug === 'poslano'), 'custom statuses come from the shop');
-  const r = await d.changeShopOrder({ taskId: task.id, orderId: info.order.id, status: 'poslano', note: 'Poslano brzom poštom, broj 123', customerNote: true }, din);
-  assert.equal(r.statusLabel, 'Poslano');
-  assert.equal(shopState.orders[5202].status, 'poslano');
-  assert.equal(shopState.notes[5202][0].customer_note, true);
-  assert.match(shopState.notes[5202][0].note, /Poslano brzom poštom, broj 123 \(Din\)/);
+  assert.equal(info.order.statusLabel, 'Procesuiranje');
+  assert.equal(info.canComplete, true);
+  assert.deepEqual(shopState.writes, [], 'reading sends nothing');
+
+  const r = await d.completeShopOrder({ taskId: task.id, orderId: info.order.id }, din);
+  assert.equal(r.statusLabel, 'Završeno');
+  assert.deepEqual(shopState.writes, [{ method: 'PUT', path: '/orders/5202', body: { status: 'completed' } }]);
   const t = (await view()).tasks.find((x) => x.id === task.id);
-  assert.ok(t.history.some((h) => /KupiTelevizor: status → „Poslano”, napomena poslana kupcu/.test(h.text)));
-  assert.equal((await view()).inbox.find((x) => x.id === item.id).order.status, 'poslano');
-  await assert.rejects(() => d.changeShopOrder({ taskId: task.id, orderId: info.order.id, status: 'nepostoji' }, din), /ne poznaje/);
+  assert.ok(t.history.some((h) => /KupiTelevizor: status „Procesuiranje” → „Završeno”/.test(h.text)));
+  assert.equal((await view()).inbox.find((x) => x.id === item.id).order.status, 'completed');
+
+  // Not "processing" (already done, or still waiting for payment): nothing is sent.
+  await assert.rejects(() => d.completeShopOrder({ taskId: task.id, orderId: 5202 }, din), /nije u statusu „Procesuiranje”/);
+  await assert.rejects(() => d.completeShopOrder({ taskId: task.id, orderId: 5203 }, din), /nije u statusu „Procesuiranje”/);
+  // Any other write is stopped before it leaves the app.
+  const { wc } = await import('../lib/shops.js');
+  const shop = await getShop('kupitelevizor');
+  await assert.rejects(() => wc(shop, 'PUT', '/orders/5203', { body: { status: 'cancelled' } }), /smije samo/);
+  await assert.rejects(() => wc(shop, 'PUT', '/orders/5203', { body: { status: 'completed', customer_note: 'x' } }), /smije samo/);
+  await assert.rejects(() => wc(shop, 'POST', '/orders/5202/notes', { body: { note: 'x', customer_note: true } }), /smije samo/);
+  await assert.rejects(() => wc(shop, 'DELETE', '/orders/5202'), /smije samo/);
+  assert.equal(shopState.writes.length, 1, 'still only the one status change');
+  assert.equal(shopState.orders[5203].status, 'pending');
 });
 
 test('a host that strips the Authorization header still works (key in the query string)', async () => {

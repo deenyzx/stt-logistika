@@ -211,7 +211,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .inbox-open:hover .rowlink-title { text-decoration: underline; text-underline-offset: 3px; }
 .inbox-open:focus-visible { box-shadow: var(--focus-ring); }
 .shopbox { display: flex; flex-direction: column; gap: 12px; padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
-.shopbox .history li.is-customer { color: var(--ink); }
 .shop-row { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .shop-row:first-of-type { padding-top: 0; }
 .steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }

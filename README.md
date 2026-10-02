@@ -15,7 +15,7 @@ What it does:
   - **Ostalo (other):** newsletters, automatic and internal mail. No notification, but still there: **Napravi zadatak** works on any email.
   
   The tab is picked by simple keywords and can be changed per email ("remember for all emails from this sender" makes it permanent). When the shop also sends its own "Nova narudžba #…" email, it is matched to the web order and not shown twice. See *Which emails reach Prijem* below.
-- **Web shop orders, live:** an order from a shop shows its current status in that shop. With the shop's API key you can **change the status** (e.g. *U obradi → Završeno*, or the shop's own statuses like *Poslano*) and add a note, optionally emailed to the customer by the shop, without opening WordPress. This is on the order in Prijem and on the task made from it.
+- **Web shop orders, live:** an order from a shop shows its current status in that shop. With the shop's API key, an order in *Procesuiranje* gets one button, **Završeno u shopu**, which sets it to *Završeno* without opening WordPress. This is on the order in Prijem and on the task made from it. It is the only thing the app ever changes in a shop (see *What leaves the app* below).
 - **Rezervacije (laptop reservations):** each reservation records who made it (name and department), who it is for, the purpose, the payment type (cash, card, bank transfer, credit/instalments, cash on delivery…), the deposit, a "reserved until" date, and comments. Every new reservation notifies both departments.
 - **Zalihe (stock):** upload the CSV your PDF scraper produces from the EKI EDI invoices, or let the office agent upload it. The app compares it with the previous export and lists what changed: quantity changes, new articles, and articles that disappeared. Tick each row once the web shop is updated.
 - **Comments everywhere:** on orders, reservations, inbox items and stock exports. Writing `@Ime` notifies that colleague.
@@ -33,13 +33,18 @@ Each shop (KupiLenovo, KupiTelevizor, …) is added by the admin in **Postavke �
 
 1. **The shop's "Nova narudžba" email**, through the email connection below. Works with no setup in WordPress. The app reads the whole email: customer, phone, email, address, items with codes, prices, delivery, total, VAT, payment and the note.
 2. **A webhook** (instant): in the shop's WordPress, WooCommerce → Postavke → Napredno → Webhooks → *Dodaj webhook*. Status *Aktivan*, topic **Narudžba kreirana** (Order created), API version WP REST API v3, and the delivery URL and secret shown for that shop in Postavke → Web shopovi. A second webhook with the topic **Narudžba ažurirana** (Order updated) keeps the status up to date.
-3. **The REST API**, which also lets the app *change* the order: WooCommerce → Postavke → Napredno → REST API → *Dodaj ključ*, permissions **Čitanje/Pisanje** (Read/Write). Copy the Consumer key (`ck_…`) and Consumer secret (`cs_…`) straight away (WooCommerce shows them once) and paste them into the shop in Postavke. *Provjeri vezu* tests the key and lists the shop's statuses, custom ones included. With the key, the morning job also pulls in the last three days of orders in case a webhook or email was missed, and **Prijem → Provjeri shopove** does it on demand.
+3. **The REST API**, to read an order's status and to set *Procesuiranje → Završeno*: WooCommerce → Postavke → Napredno → REST API → *Dodaj ključ*, permissions **Čitanje/Pisanje** (Read/Write; writing is needed only for that one status change). Copy the Consumer key (`ck_…`) and Consumer secret (`cs_…`) straight away (WooCommerce shows them once) and paste them into the shop in Postavke. *Provjeri vezu* tests the key by reading the newest order. With the key, the morning job also reads the last three days of orders in case a webhook or email was missed, and **Prijem → Provjeri shopove** does it on demand.
 
-The key is stored only on the server and never sent to the browser. Status changes are written to the shop's order notes with the colleague's name (e.g. *Status promijenjen u Poslano (Din)*), and they are logged on the task. Only Administrator and Veleprodaja can change shop orders (`ACCESS.webshop` in `lib/constants.js`).
+The key is stored only on the server and never sent to the browser. The status change is logged on the order and the task here, with the colleague's name. The app adds no notes in the shop (WooCommerce records the status change in its own order history, as it always does). Only Administrator and Veleprodaja can do it (`ACCESS.webshop` in `lib/constants.js`).
+
+#### What leaves the app
+
+- **To the shops:** only reads (orders, for status and the safety-net sync), plus one kind of write: `PUT /wp-json/wc/v3/orders/<id>` with the body `{"status":"completed"}`, and only after reading the order and finding it in *Procesuiranje* (`processing`). `wc()` in `lib/shops.js` refuses every other write (other statuses, notes, customer notes, deletes) before it is sent, and a test checks this.
+- **To customers:** nothing. The app sends no emails at all and has no way to.
+- **Watch out:** WooCommerce itself emails the customer "your order is complete" whenever an order becomes *Završeno*, no matter who changes it. If you don't want that, turn it off in each shop: WooCommerce → Postavke → Emailovi → *Završena narudžba* (Completed order) → untick *Omogući*.
+- **To the team:** in-app notifications, and push notifications to the devices each person turned on (through the browser's push service).
 
 The app checks WooCommerce's signature on every webhook call, so nobody else can post fake orders. In Postavke → Zalihe i web shop you can make web orders skip Prijem and become orders straight away. A single shop can still be set up the old way with env variables (`WOO_URL`, `WOO_CONSUMER_KEY`, `WOO_CONSUMER_SECRET`, `WOO_WEBHOOK_SECRET`, `WOO_SHOP_NAME`, webhook URL without `?shop=`).
-
-*Possible next step (not built):* after you tick the stock changes, the app could write the new quantities to the shop through the same API key, matching products by SKU. Say the word if you want it.
 
 ### Company email → built (the receiving side). You choose how mail gets to it.
 
@@ -147,7 +152,7 @@ Without Redis variables the app keeps data in memory (lost on restart, not share
 | `lib/domain.js` | The rules: orders, reservations, comments, Prijem, stock imports, and who gets which notification. |
 | `lib/csv.js` | Reads the scraper's CSV (delimiter, header and column detection) and compares two exports. |
 | `lib/integrations.js` | WooCommerce signature check and order mapping; email payloads from Postmark/Mailgun/SendGrid/JSON. |
-| `lib/shops.js` | The web shops and the WooCommerce REST API: read an order, change its status, notes, recent orders. |
+| `lib/shops.js` | The web shops and the WooCommerce REST API: read orders, and the one allowed write (Procesuiranje → Završeno). |
 | `lib/wooEmail.js` | Reads a shop's "Nova narudžba" email (plain text or HTML) into a full order. |
 | `lib/emailRules.js` | The admin's email rules. |
 | `lib/store.js` | Redis storage. Each save checks the item's revision, so two people saving the same order at once never overwrite each other. `stt:ver` is bumped on every write so the browser's poll is one read. |

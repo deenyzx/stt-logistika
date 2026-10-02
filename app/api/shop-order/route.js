@@ -1,8 +1,8 @@
-// An order as the web shop sees it right now, and changing it there.
-//   GET  ?inboxId=…  or  ?taskId=…            → { connected, order: { status, … }, notes, statuses }
-//   POST { inboxId?, taskId?, orderId, status?, note?, customerNote? } → changes it in the shop
+// An order as the web shop sees it right now, and the one change the app may make there.
+//   GET  ?inboxId=…  or  ?taskId=…               → { connected, order: { status, … }, canComplete }
+//   POST { inboxId?, taskId?, orderId }           → Procesuiranje → Završeno in the shop (nothing else is sent)
 import { route, json, body } from '@/lib/http.js';
-import { shopOrderInfo, changeShopOrder } from '@/lib/domain.js';
+import { shopOrderInfo, completeShopOrder } from '@/lib/domain.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,8 +13,5 @@ export const GET = route('webshop', async (req) => {
 
 export const POST = route('webshop', async (req, { user }) => {
   const b = await body(req);
-  return json(await changeShopOrder({
-    shopId: b.shopId, inboxId: b.inboxId, taskId: b.taskId, orderId: b.orderId,
-    status: b.status ? String(b.status) : '', note: b.note, customerNote: !!b.customerNote,
-  }, user));
+  return json(await completeShopOrder({ shopId: b.shopId, inboxId: b.inboxId, taskId: b.taskId, orderId: b.orderId }, user));
 });

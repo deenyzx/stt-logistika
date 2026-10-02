@@ -315,7 +315,7 @@ function InboxDetail({ item: x, onClose }) {
         {o ? <div><dt>Ukupno</dt><dd style={{ fontWeight: 600 }}>{o.total != null ? fmtMoney(o.total, o.currency) : '—'}</dd></div> : null}
         {o?.payment ? <div><dt>Plaćanje</dt><dd>{o.payment}</dd></div> : null}
         {o?.shippingMethod ? <div><dt>Dostava</dt><dd>{o.shippingMethod}</dd></div> : null}
-        {o?.status ? <div><dt>Status u shopu</dt><dd>{o.statusLabel || o.status}</dd></div> : null}
+        {o?.status ? <div><dt>Status u shopu</dt><dd>{String(o.statusLabel || o.status).replace(/^./, (c) => c.toUpperCase())}</dd></div> : null}
         {x.orderRef && !o ? <div><dt>Broj narudžbe</dt><dd>#{x.orderRef}</dd></div> : null}
       </dl>
       {o?.items?.length ? (
