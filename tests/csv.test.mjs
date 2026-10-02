@@ -34,8 +34,14 @@ test('snapshot finds Bosnian column names and adds up repeated codes', () => {
   assert.equal(s.qtyCol, 'Količina');
   assert.equal(s.nameCol, 'Naziv artikla');
   assert.equal(s.count, 2);
-  assert.deepEqual(s.rows['21JK0008SC'], { name: 'Lenovo ThinkPad E14', qty: 5 });
+  assert.deepEqual(s.rows['21JK0008SC'], { name: 'Lenovo ThinkPad E14', qty: 5, sell: 1899 });
   assert.equal(s.rows.P2425H.qty, 10);
+  assert.equal(s.sellCol, 'Cijena', 'a price column is kept for article lookups');
+});
+
+test('purchase and sale price columns are both picked up', () => {
+  const s = toSnapshot('Šifra;Naziv;Stanje;Nabavna cijena;Prodajna cijena\n1894;Miš Lenovo Legion M600;7;45,00;89,00\n');
+  assert.deepEqual(s.rows['1894'], { name: 'Miš Lenovo Legion M600', qty: 7, buy: 45, sell: 89 });
 });
 
 test('snapshot honours a chosen column mapping', () => {

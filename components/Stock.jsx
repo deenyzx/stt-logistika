@@ -1,10 +1,11 @@
 'use client';
-// Zalihe: the newest EKI EDI export compared with the previous one. Tick each row once the web shop has the new stock.
+// Zalihe: the newest EKI EDI export compared with the previous one (tick each row once the web shop has the new
+// stock), and Artikli: the latest export as a list with what is reserved and what is free (the sheet's ARTIKLI/STANJE).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
 import { Icon, Button, Segmented, Sheet, Tag, CheckBox, Comments, Empty, Note, cx } from '@/components/ui.jsx';
-import { fmtWhen, fmtQty, fmtDelta, fmtDate, fmtTime } from '@/lib/format.js';
+import { fmtWhen, fmtQty, fmtDelta, fmtDate, fmtTime, fmtMoney } from '@/lib/format.js';
 
 async function readFileText(file) {
   const buf = await file.arrayBuffer();
@@ -14,7 +15,64 @@ async function readFileText(file) {
 
 const SOURCE_LABEL = { agent: 'poslao agent iz ureda', rucno: 'učitano ručno' };
 
+function read(k) { try { return localStorage.getItem(k); } catch { return null; } }
+
 export default function Stock() {
+  const [tab, setTab] = useState(() => read('stt_stock_tab') || 'promjene');
+  const change = (v) => { setTab(v); try { localStorage.setItem('stt_stock_tab', v); } catch { /* private mode */ } };
+  const tabs = <Segmented label="Prikaz" value={tab} onChange={change} options={[{ value: 'promjene', label: 'Promjene za web' }, { value: 'artikli', label: 'Artikli i stanje' }]} />;
+  return tab === 'artikli' ? <Articles tabs={tabs} /> : <StockChanges tabs={tabs} />;
+}
+
+function Articles({ tabs }) {
+  const { data } = useApp();
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const h = setTimeout(() => { api('GET', '/api/articles?all=1&q=' + encodeURIComponent(q)).then((r) => { if (live) setRes(r); }).catch(() => {}); }, 250);
+    return () => { live = false; clearTimeout(h); };
+  }, [q, data.stockLatest?.at, data.reservations]);
+  return (
+    <main className="page">
+      <PageHead title="Artikli i stanje" lead="Zadnji izvoz iz EKI EDI: stanje u VP, koliko je rezervisano i koliko je slobodno. Odavde se popunjavaju šifre u prijenosnicama, upitima i rezervacijama.">
+        <a className="btn" href="/api/export?what=artikli" download><Icon name="download" />CSV</a>
+      </PageHead>
+      {tabs}
+      <div className="row" style={{ gap: 12 }}>
+        <label className="search grow" style={{ maxWidth: 420 }}>
+          <Icon name="search" size={18} />
+          <span className="sr">Traži</span>
+          <input className="input" type="search" placeholder="Traži šifru ili naziv" value={q} onChange={(e) => setQ(e.target.value)} />
+        </label>
+        {res?.stockAt ? <span className="small muted">{res.filename} · {fmtDate(res.stockAt)} {fmtTime(res.stockAt)} · {res.total} {q ? 'pronađeno' : 'artikala'}</span> : null}
+      </div>
+      {!res ? <p className="muted">Učitavam…</p> : !res.stockAt ? <Empty>Još nema izvoza zaliha. Učitaj CSV u kartici „Promjene za web” ili ga pošalje agent iz ureda.</Empty> : res.items.length === 0 ? <Empty>Ništa ne odgovara.</Empty> : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Šifra</th><th>Naziv artikla</th><th className="r">Stanje VP</th><th className="r">Rezervisano</th><th className="r">Slobodno</th><th className="r">Nabavna</th><th className="r">Prodajna</th></tr></thead>
+            <tbody>
+              {res.items.map((a) => (
+                <tr key={a.code} className={a.free != null && a.free <= 0 ? 'is-done' : undefined}>
+                  <td className="code">{a.code}</td>
+                  <td>{a.name}</td>
+                  <td className="r">{fmtQty(a.qty)}</td>
+                  <td className="r">{a.reserved ? fmtQty(a.reserved) : ''}</td>
+                  <td className="r"><strong>{fmtQty(a.free)}</strong></td>
+                  <td className="r">{a.buy != null ? fmtMoney(a.buy, '') : ''}</td>
+                  <td className="r">{a.sell != null ? fmtMoney(a.sell, '') : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {res && res.total > res.items.length ? <p className="small muted">Prikazano prvih {res.items.length} od {res.total}. Suzi pretragu ili preuzmi CSV.</p> : null}
+    </main>
+  );
+}
+
+function StockChanges({ tabs }) {
   const { data, me, route, go, reload, toast, patch } = useApp();
   const [full, setFull] = useState({}); // older exports loaded on demand
   const [filter, setFilter] = useState('todo');
@@ -88,6 +146,7 @@ export default function Stock() {
         <Button variant="primary" icon="upload" busy={busy} onClick={() => fileRef.current?.click()}>Učitaj CSV</Button>
         <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={(e) => upload(e.target.files?.[0])} />
       </PageHead>
+      {tabs}
 
       {over ? <div className="dropzone is-over"><Icon name="upload" size={28} /><strong>Pusti CSV ovdje</strong></div> : null}
 

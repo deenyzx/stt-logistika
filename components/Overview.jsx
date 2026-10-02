@@ -1,13 +1,17 @@
 'use client';
-// Pregled: today's numbers on the black band, what needs attention, the inbox and the latest notifications.
+// Moje obaveze: everything waiting on this person from every part of the app in one list (prijenosnice to answer,
+// ship or receive, upiti to answer or close, reservations to confirm, new web orders and emails, their tasks),
+// today's numbers, goods arriving, search, and the latest notifications.
 import { useMemo, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
-import { Icon, Button, StatusTag, SourceChip, ResTag, Tag, Empty, cx } from '@/components/ui.jsx';
+import { Icon, Button, Tag, Empty, Sheet, cx } from '@/components/ui.jsx';
 import { TaskForm, QuickOrderForm } from '@/components/Tasks.jsx';
 import { ReservationForm } from '@/components/Reservations.jsx';
-import { InboxActions, KindTag } from '@/components/InboxPage.jsx';
-import { can, isOpenTask, SOURCES, PAYMENT } from '@/lib/constants.js';
-import { fmtDue, fmtDate, fmtWhen, fmtMoney, daysFromToday, fold, todayISO, preview, TZ } from '@/lib/format.js';
+import { TransferForm, RouteStrip } from '@/components/Transfers.jsx';
+import { RequestForm } from '@/components/Requests.jsx';
+import { can, isOpenTask, TRANSFER_DONE } from '@/lib/constants.js';
+import { obligationsFor, countByKind, OBLIGATION_KINDS } from '@/lib/obligations.js';
+import { fmtDate, fmtWhen, daysFromToday, fold, dayLabel, addDaysISO, TZ } from '@/lib/format.js';
 
 const DAYS = ['NEDJELJA', 'PONEDJELJAK', 'UTORAK', 'SRIJEDA', 'ČETVRTAK', 'PETAK', 'SUBOTA'];
 
@@ -23,55 +27,57 @@ function eyebrow() {
   return `${DAYS[idx]}, ${fmtDate(d.getTime())}`;
 }
 
-// Most urgent first: late, due today/tomorrow, blocked on the invoice, new.
-function urgency(t) {
-  const d = t.due ? daysFromToday(t.due) : 99;
-  let s = 0;
-  if (d < 0) s += 100;
-  else if (d <= 1) s += 60;
-  else if (d <= 3) s += 30;
-  if (t.status === 'ceka_kalkulaciju' || t.status === 'za_fakturu') s += 40;
-  if (t.status === 'nova') s += 35;
-  if (t.status === 'ceka_robu') s += 10;
-  if (t.needsInfo) s += 45;
-  if (t.expectedAt && daysFromToday(t.expectedAt) <= 0) s += 50;
-  return s;
-}
+const NEW_OPTIONS = [
+  { key: 'prijenosnica', area: 'prijenosnice', icon: 'truck', label: 'Prijenosnica', hint: 'Roba iz jednog skladišta u drugo' },
+  { key: 'upit', area: 'upiti', icon: 'chat', label: 'Upit MP', hint: 'Pitaj veleprodaju za cijenu, dostupnost, rok' },
+  { key: 'rezervacija', area: 'rezervacije', icon: 'laptop', label: 'Rezervacija', hint: 'Laptop ili druga roba za kupca' },
+  { key: 'narudzba', area: 'zadaci', icon: 'cart', label: 'Narudžba ili zadatak', hint: 'Sa svim podacima: kupac, stavke, rokovi' },
+  { key: 'brzi', area: 'zadaci', icon: 'quick', label: 'Brzi unos', hint: 'Telefonom ili lično, dopuniš kasnije' },
+];
 
 export default function Overview() {
   const { data, me, go, online, today } = useApp();
   const [q, setQ] = useState('');
-  const [newTask, setNewTask] = useState(false);
-  const [newRes, setNewRes] = useState(false);
-  const [quick, setQuick] = useState(false);
-  const canTasks = can(me.role, 'zadaci');
-  const canInbox = can(me.role, 'prijem');
-  const canRes = can(me.role, 'rezervacije');
+  const [kind, setKind] = useState('sve');
+  const [chooser, setChooser] = useState(false);
+  const [form, setForm] = useState(null);
 
-  const open = data.tasks.filter(isOpenTask);
-  const byStatus = (s) => open.filter((t) => t.status === s);
-  const waiting = byStatus('ceka_robu');
-  const oldestWait = waiting.length ? Math.max(...waiting.map((t) => Math.floor((Date.now() - (t.statusAt || t.createdAt)) / 86400000))) : 0;
-  const calc = byStatus('ceka_kalkulaciju');
-  const activeRes = data.reservations.filter((r) => r.status === 'aktivna');
-  const expiring = activeRes.filter((r) => r.until && daysFromToday(r.until) <= 1).sort((a, b) => (a.until < b.until ? -1 : 1));
-  const newToday = open.filter((t) => todayISO(t.createdAt) === today).length;
-  const attention = [...open].sort((a, b) => urgency(b) - urgency(a) || (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6);
-  const inbox = data.inbox.filter((x) => x.status === 'novo' && x.kind !== 'ostalo');
-  // Goods expected in the next two weeks, or already late.
-  const arriving = open.filter((t) => t.expectedAt && daysFromToday(t.expectedAt) <= 14).sort((a, b) => (a.expectedAt < b.expectedAt ? -1 : 1));
-  const nextArrival = open.filter((t) => t.expectedAt).map((t) => t.expectedAt).sort()[0];
+  const obligations = useMemo(() => obligationsFor(data, me), [data, me]);
+  const byKind = countByKind(obligations);
+  const shown = kind === 'sve' ? obligations : obligations.filter((o) => o.kind === kind);
+  const groups = useMemo(() => {
+    const out = [];
+    const urgent = shown.filter((o) => o.urgent);
+    if (urgent.length) out.push({ key: 'hitno', label: 'Kasni', items: urgent, tone: 'danger' });
+    const m = new Map();
+    for (const o of shown.filter((x) => !x.urgent)) { if (!m.has(o.date)) m.set(o.date, []); m.get(o.date).push(o); }
+    for (const [date, items] of m) out.push({ key: date, label: dayLabel(date), items, tone: date === today ? 'today' : date === addDaysISO(today, -1) ? 'yesterday' : null });
+    return out;
+  }, [shown, today]);
+
+  const openTasks = data.tasks.filter(isOpenTask);
+  const trOpen = data.transfers.filter((t) => !TRANSFER_DONE.includes(t.status));
+  const trOnWay = trOpen.filter((t) => t.status === 'na_putu').length;
+  const rqWaiting = data.requests.filter((r) => r.status === 'novi').length;
+  const resWaiting = data.reservations.filter((r) => r.status === 'ceka_vp').length;
+  const resActive = data.reservations.filter((r) => r.status === 'aktivna').length;
+  const arriving = openTasks.filter((t) => t.expectedAt && daysFromToday(t.expectedAt) <= 14 && daysFromToday(t.expectedAt) > 0).sort((a, b) => (a.expectedAt < b.expectedAt ? -1 : 1));
 
   const results = useMemo(() => {
     const f = fold(q);
     if (f.length < 2) return null;
     const hit = (...xs) => xs.some((x) => fold(x).includes(f));
     return [
-      ...data.tasks.filter((t) => hit(t.number, t.title, t.customer?.name, t.customer?.contact, t.note, ...(t.items || []).flatMap((i) => [i.code, i.name]))).map((t) => ({ kind: 'zadaci', id: t.id, num: t.number, title: t.title, meta: t.customer?.name })),
-      ...data.reservations.filter((r) => hit(r.number, r.model, r.code, r.customer?.name, r.customer?.phone, r.purpose)).map((r) => ({ kind: 'rezervacije', id: r.id, num: r.number, title: r.model, meta: r.customer?.name })),
-      ...data.inbox.filter((x) => hit(x.title, x.from?.name, x.from?.email, x.body)).map((x) => ({ kind: 'prijem', id: x.id, num: x.source === 'web' ? 'WEB' : 'EMAIL', title: x.title, meta: x.from?.name || x.from?.email })),
-    ].slice(0, 12);
+      ...data.transfers.filter((t) => hit(t.number, t.from.name, t.to.name, t.note, ...t.items.flatMap((l) => [l.code, l.name]))).map((t) => ({ view: 'prijenosnice', id: t.id, num: t.number, title: t.items.map((l) => l.name || l.code).join(', '), meta: `${t.from.name} → ${t.to.name}` })),
+      ...data.requests.filter((r) => hit(r.number, r.name, r.code, r.pn, r.customer, r.question, r.answer)).map((r) => ({ view: 'upiti', id: r.id, num: r.number, title: r.name || r.code || r.question, meta: r.customer })),
+      ...data.tasks.filter((t) => hit(t.number, t.title, t.customer?.name, t.customer?.contact, t.note, ...(t.items || []).flatMap((i) => [i.code, i.name]))).map((t) => ({ view: 'zadaci', id: t.id, num: t.number, title: t.title, meta: t.customer?.name })),
+      ...data.reservations.filter((r) => hit(r.number, r.model, r.code, r.customer?.name, r.customer?.phone, r.purpose)).map((r) => ({ view: 'rezervacije', id: r.id, num: r.number, title: r.model, meta: r.customer?.name })),
+      ...data.inbox.filter((x) => hit(x.title, x.from?.name, x.from?.email, x.body)).map((x) => ({ view: 'prijem', id: x.id, num: x.source === 'web' ? 'WEB' : 'EMAIL', title: x.title, meta: x.from?.name || x.from?.email })),
+    ].slice(0, 15);
   }, [q, data]);
+
+  const options = NEW_OPTIONS.filter((o) => can(me.role, o.area));
+  const chips = [{ value: 'sve', label: 'Sve', count: obligations.length }, ...Object.entries(OBLIGATION_KINDS).filter(([k]) => byKind[k]).map(([k, v]) => ({ value: k, label: v.plural, count: byKind[k] }))];
 
   return (
     <main className="page">
@@ -79,11 +85,9 @@ export default function Overview() {
         <label className="search page-search">
           <Icon name="search" size={18} />
           <span className="sr">Pretraga</span>
-          <input className="input" type="search" placeholder="Traži kupca, broj, šifru" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input" type="search" placeholder="Traži broj, šifru, kupca" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
-        {canTasks ? <Button icon="quick" onClick={() => setQuick(true)}>Brzi unos</Button> : null}
-        {me.role === 'maloprodaja' && canRes ? <Button variant="primary" icon="plus" onClick={() => setNewRes(true)}>Nova rezervacija</Button>
-          : canTasks ? <Button variant="primary" icon="plus" onClick={() => setNewTask(true)}>Nova narudžba</Button> : null}
+        <Button variant="primary" icon="plus" onClick={() => setChooser(true)}>Dodaj</Button>
       </PageHead>
 
       {results ? (
@@ -92,7 +96,7 @@ export default function Overview() {
           {results.length === 0 ? <p className="muted" style={{ padding: 20 }}>Ništa nije pronađeno.</p> : (
             <div className="rows">
               {results.map((r) => (
-                <button key={r.kind + r.id} type="button" className="rowlink" onClick={() => go(r.kind, r.id)}>
+                <button key={r.view + r.id} type="button" className="rowlink" onClick={() => go(r.view, r.id)}>
                   <span className="rowlink-main">
                     <span className="num-label">{r.num}</span>
                     <span className="rowlink-title">{r.title}</span>
@@ -112,133 +116,86 @@ export default function Overview() {
           <span className={cx('sync', !online && 'is-off')}><span className="sync-dot" />{online ? `Osvježeno ${fmtWhen(data.loadedAt)}` : 'Nema veze, pokušavam ponovo'}</span>
         </div>
         <div className="stats">
-          {canTasks ? (
-            <>
-              <button type="button" className="stat" onClick={() => go('zadaci')}>
-                <span className="stat-label">Otvorene narudžbe</span>
-                <span className="stat-value">{open.length}</span>
-                <span className="stat-hint">{newToday ? `${newToday} ${newToday === 1 ? 'nova' : 'novih'} danas` : 'Nema novih danas'}</span>
-              </button>
-              <button type="button" className="stat" onClick={() => go('zadaci', '~ceka_robu')}>
-                <span className="stat-label">Čeka robu</span>
-                <span className="stat-value">{waiting.length}</span>
-                <span className="stat-hint">{!waiting.length ? 'Ništa ne čeka' : nextArrival ? `Sljedeća stiže ${fmtDue(nextArrival)}` : oldestWait === 0 ? 'Sve od danas' : `Najstarija čeka ${oldestWait} ${oldestWait === 1 ? 'dan' : 'dana'}`}</span>
-              </button>
-              <button type="button" className={cx('stat', calc.length && 'stat-accent')} onClick={() => go('zadaci', '~ceka_kalkulaciju')}>
-                <span className="stat-label">Čeka ulaznu kalkulaciju</span>
-                <span className="stat-value">{calc.length}</span>
-                <span className="stat-hint">{calc.length ? 'Roba stigla, faktura čeka' : 'Ništa ne čeka'}</span>
-              </button>
-            </>
+          <button type="button" className={cx('stat', obligations.length && 'stat-accent')} onClick={() => setKind('sve')}>
+            <span className="stat-label">Moje obaveze</span>
+            <span className="stat-value">{obligations.length}</span>
+            <span className="stat-hint">{obligations.filter((o) => o.urgent).length ? `${obligations.filter((o) => o.urgent).length} kasni` : obligations.length ? 'Ništa ne kasni' : 'Sve je urađeno'}</span>
+          </button>
+          {can(me.role, 'prijenosnice') ? (
+            <button type="button" className="stat" onClick={() => go('prijenosnice')}>
+              <span className="stat-label">Prijenosnice u toku</span>
+              <span className="stat-value">{trOpen.length}</span>
+              <span className="stat-hint">{trOnWay ? `${trOnWay} na putu` : 'Ništa nije na putu'}</span>
+            </button>
           ) : null}
-          {canRes ? (
+          {can(me.role, 'upiti') ? (
+            <button type="button" className="stat" onClick={() => go('upiti')}>
+              <span className="stat-label">Upiti bez odgovora</span>
+              <span className="stat-value">{rqWaiting}</span>
+              <span className="stat-hint">{data.requests.filter((r) => r.status === 'dostupno' || r.status === 'nije_dostupno').length} odgovoreno, nije zatvoreno</span>
+            </button>
+          ) : null}
+          {can(me.role, 'zadaci') ? (
+            <button type="button" className="stat" onClick={() => go('zadaci')}>
+              <span className="stat-label">Otvorene narudžbe</span>
+              <span className="stat-value">{openTasks.length}</span>
+              <span className="stat-hint">{openTasks.filter((t) => t.status === 'ceka_robu').length} čeka robu · {openTasks.filter((t) => t.status === 'ceka_kalkulaciju').length} kalkulacija</span>
+            </button>
+          ) : null}
+          {can(me.role, 'rezervacije') ? (
             <button type="button" className="stat" onClick={() => go('rezervacije')}>
-              <span className="stat-label">Aktivne rezervacije</span>
-              <span className="stat-value">{activeRes.length}</span>
-              <span className="stat-hint">{expiring.length ? `${expiring.length} ističe danas ili sutra` : 'Nijedna ne ističe uskoro'}</span>
+              <span className="stat-label">Rezervacije</span>
+              <span className="stat-value">{resActive}</span>
+              <span className="stat-hint">{resWaiting ? `${resWaiting} čeka potvrdu VP` : 'Aktivne'}</span>
             </button>
           ) : null}
         </div>
       </section>
 
       <div className="cols">
-        <div className="stack" style={{ gap: 24 }}>
-          {canTasks ? (
-            <section className="card" aria-label="Traži pažnju">
-              <div className="card-head">
-                <h2 className="h-heading">Traži pažnju</h2>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => go('zadaci')}>Sve narudžbe<Icon name="arrow" size={16} /></button>
-              </div>
-              {attention.length === 0 ? <Empty>Nema otvorenih narudžbi ni zadataka.</Empty> : (
-                <div className="rows">
-                  {attention.map((t) => {
-                    const late = t.due && daysFromToday(t.due) < 0;
-                    return (
-                      <button key={t.id} type="button" className="rowlink" onClick={() => go('zadaci', t.id)}>
-                        <span className="rowlink-main">
-                          <span className="row"><span className="num-label">{t.number}</span><StatusTag status={t.status} short />{t.needsInfo ? <Tag tone="accent" icon="edit">Dopuniti</Tag> : null}{t.expectedAt && daysFromToday(t.expectedAt) <= 0 ? <Tag tone="wait" icon="truck">{daysFromToday(t.expectedAt) < 0 ? 'Kasni roba' : 'Roba stiže danas'}</Tag> : null}</span>
-                          <span className="rowlink-title">{t.title}</span>
-                          <span className="rowlink-meta">{[t.customer?.name, SOURCES[t.source]?.label, t.assignee ? 'Dodijeljeno: ' + (data.users.find((u) => u.id === t.assignee)?.name || '?') : 'Nije dodijeljeno'].filter(Boolean).join(' · ')}</span>
-                        </span>
-                        <span className="rowlink-side">
-                          {t.due ? <span className={late ? 'is-late' : undefined}>{late ? 'Kasni · ' : 'Rok '}{fmtDue(t.due)}</span> : null}
-                          <span className="cc"><Icon name="chat" size={16} />{t.comments?.length || 0}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+        <section className="card" aria-label="Moje obaveze">
+          <div className="card-head">
+            <h2 className="h-heading">Moje obaveze</h2>
+            <span className="small muted">Šta čeka tebe, iz svih dijelova</span>
+          </div>
+          {obligations.length ? (
+            <div className="ob-chips" role="group" aria-label="Vrsta">
+              {chips.map((c) => (
+                <button key={c.value} type="button" className={cx('chip', kind === c.value && 'is-on')} aria-pressed={kind === c.value} onClick={() => setKind(c.value)}>
+                  {c.label}<span className="seg-count">{c.count}</span>
+                </button>
+              ))}
+            </div>
           ) : null}
+          {shown.length === 0 ? <Empty>{obligations.length ? 'Ovdje nema ništa.' : 'Ništa ne čeka tebe. Kad stigne prijenosnica, upit, rezervacija ili narudžba, pojavi se ovdje.'}</Empty> : null}
+          {groups.map((g) => (
+            <div key={g.key}>
+              <h3 className={cx('ob-group label', g.tone && 'is-' + g.tone)}>{g.label} · {g.items.length}</h3>
+              <div className="rows">
+                {g.items.map((o) => <ObligationRow key={o.key} o={o} onOpen={() => go(o.view, o.id)} />)}
+              </div>
+            </div>
+          ))}
+        </section>
 
-          {canTasks && arriving.length ? (
+        <aside className="stack" style={{ gap: 16 }}>
+          {can(me.role, 'zadaci') && arriving.length ? (
             <section className="card" aria-label="Roba stiže">
               <div className="card-head">
                 <h2 className="h-heading">Roba stiže</h2>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => go('zadaci', '~stize')}>Sve po dolasku<Icon name="arrow" size={16} /></button>
+                <button type="button" className="btn btn-quiet btn-sm" onClick={() => go('zadaci', '~stize')}>Sve<Icon name="arrow" size={16} /></button>
               </div>
               <div className="rows">
-                {arriving.slice(0, 6).map((t) => {
-                  const d = daysFromToday(t.expectedAt);
-                  return (
-                    <button key={t.id} type="button" className="rowlink" onClick={() => go('zadaci', t.id)}>
-                      <span className="rowlink-main">
-                        <span className="row"><span className="num-label">{t.number}</span><StatusTag status={t.status} short /></span>
-                        <span className="rowlink-title">{t.title}</span>
-                        <span className="rowlink-meta">{[t.customer?.name, t.supplier].filter(Boolean).join(' · ')}</span>
-                      </span>
-                      <span className="rowlink-side">
-                        <span className={d < 0 ? 'is-late' : undefined} style={{ fontWeight: 600 }}>{d < 0 ? `Kasni ${-d} ${d === -1 ? 'dan' : 'dana'}` : d === 0 ? 'Danas' : d === 1 ? 'Sutra' : fmtDate(t.expectedAt)}</span>
-                      </span>
-                    </button>
-                  );
-                })}
+                {arriving.slice(0, 5).map((t) => (
+                  <button key={t.id} type="button" className="rowlink" onClick={() => go('zadaci', t.id)}>
+                    <span className="rowlink-main">
+                      <span className="num-label">{t.number}</span>
+                      <span className="rowlink-title">{t.title}</span>
+                    </span>
+                    <span className="rowlink-side"><strong>{daysFromToday(t.expectedAt) === 1 ? 'Sutra' : fmtDate(t.expectedAt)}</strong></span>
+                  </button>
+                ))}
               </div>
-            </section>
-          ) : null}
-
-          {canRes && (me.role === 'maloprodaja' || expiring.length) ? (
-            <section className="card" aria-label="Rezervacije">
-              <div className="card-head">
-                <h2 className="h-heading">{expiring.length ? 'Rezervacije koje ističu' : 'Rezervacije'}</h2>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => go('rezervacije')}>Sve rezervacije<Icon name="arrow" size={16} /></button>
-              </div>
-              {(expiring.length ? expiring : activeRes.slice(0, 5)).length === 0 ? <Empty>Nema aktivnih rezervacija.</Empty> : (
-                <div className="rows">
-                  {(expiring.length ? expiring : activeRes.slice(0, 5)).map((r) => (
-                    <button key={r.id} type="button" className="rowlink" onClick={() => go('rezervacije', r.id)}>
-                      <span className="rowlink-main">
-                        <span className="row"><span className="num-label">{r.number}</span><ResTag r={r} today={today} /></span>
-                        <span className="rowlink-title">{r.model}{r.qty > 1 ? ' ×' + r.qty : ''}</span>
-                        <span className="rowlink-meta">{[r.customer?.name, PAYMENT[r.payment], r.createdBy?.name].filter(Boolean).join(' · ')}</span>
-                      </span>
-                      <span className="rowlink-side">{r.until ? 'do ' + fmtDue(r.until) : null}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-          ) : null}
-        </div>
-
-        <aside className="stack" style={{ gap: 16 }}>
-          {canInbox ? (
-            <section className="card" aria-label="Prijem">
-              <div className="card-head"><h2 className="h-heading">Prijem</h2><span className="small muted">Web shop i email</span></div>
-              {inbox.length === 0 ? <p className="muted small" style={{ padding: '16px 20px' }}>Ništa ne čeka. Nove web narudžbe i emailovi stižu ovdje.</p> : (
-                <div className="rows">
-                  {inbox.slice(0, 3).map((x) => (
-                    <div key={x.id} className="stack" style={{ gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--line)' }}>
-                      <div className="row small muted"><KindTag item={x} /><span className="grow">{x.source === 'web' ? '#' + (x.order?.number || '') : x.from?.name || x.from?.email}</span><span>{fmtWhen(x.receivedAt)}</span></div>
-                      <button type="button" className="rowlink-title" style={{ all: 'unset', cursor: 'pointer', fontWeight: 600 }} onClick={() => go('prijem', x.id)}>{x.title}</button>
-                      <span className="small muted nbody nbody-2">{x.order ? [x.from?.name, x.order.city, x.order.total != null && fmtMoney(x.order.total, x.order.currency), x.order.payment].filter(Boolean).join(' · ') : preview(x.body, 180)}</span>
-                      <InboxActions item={x} compact />
-                    </div>
-                  ))}
-                  {inbox.length > 3 ? <div className="card-foot"><button type="button" className="btn btn-quiet" onClick={() => go('prijem')}>Još {inbox.length - 3} u prijemu</button></div> : null}
-                </div>
-              )}
             </section>
           ) : null}
 
@@ -262,9 +219,49 @@ export default function Overview() {
         </aside>
       </div>
 
-      {newTask ? <TaskForm onClose={() => setNewTask(false)} /> : null}
-      {newRes ? <ReservationForm onClose={() => setNewRes(false)} /> : null}
-      {quick ? <QuickOrderForm onClose={() => setQuick(false)} /> : null}
+      {chooser ? (
+        <Sheet title="Dodaj" onClose={() => setChooser(false)} flush>
+          <div className="rows">
+            {options.map((o) => (
+              <button key={o.key} type="button" className="rowlink" onClick={() => { setChooser(false); setForm(o.key); }}>
+                <Icon name={o.icon} size={22} />
+                <span className="rowlink-main">
+                  <span className="rowlink-title">{o.label}</span>
+                  <span className="rowlink-meta">{o.hint}</span>
+                </span>
+                <Icon name="next" />
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      ) : null}
+      {form === 'prijenosnica' ? <TransferForm onClose={() => setForm(null)} /> : null}
+      {form === 'upit' ? <RequestForm onClose={() => setForm(null)} /> : null}
+      {form === 'rezervacija' ? <ReservationForm onClose={() => setForm(null)} /> : null}
+      {form === 'narudzba' ? <TaskForm onClose={() => setForm(null)} /> : null}
+      {form === 'brzi' ? <QuickOrderForm onClose={() => setForm(null)} /> : null}
     </main>
+  );
+}
+
+function ObligationRow({ o, onOpen }) {
+  const k = OBLIGATION_KINDS[o.kind];
+  return (
+    <button type="button" className={cx('rowlink ob-row', o.urgent && 'is-urgent')} onClick={onOpen}>
+      <span className="ob-ic" aria-hidden="true"><Icon name={k.icon} size={20} /></span>
+      <span className="rowlink-main">
+        <span className="row" style={{ gap: 6 }}>
+          <span className="label muted">{k.label}</span>
+          <span className="num-label">{o.number}</span>
+        </span>
+        <span className="rowlink-title">{o.title}</span>
+        {o.route ? <RouteStrip from={{ name: o.route.from }} to={{ name: o.route.to }} /> : null}
+        {o.sub ? <span className="rowlink-meta nbody nbody-2">{o.sub}</span> : null}
+        <span className="row" style={{ gap: 6 }}>
+          {o.actions.map((a) => <Tag key={a.text} tone={a.tone}>{a.text}</Tag>)}
+        </span>
+      </span>
+      <Icon name="next" />
+    </button>
   );
 }

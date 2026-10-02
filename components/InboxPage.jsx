@@ -154,6 +154,7 @@ export default function InboxPage() {
     <main className="page">
       <PageHead title="Prijem" lead="Sve što stigne sa sajtova i emailom. Ti biraš šta postaje narudžba ili zadatak: narudžbu prihvati, a email pretvori u zadatak ili ga dodaj narudžbi na koju se odnosi.">
         {canSync ? <Button icon="sync" busy={syncing} onClick={sync}>Provjeri shopove</Button> : null}
+        <a className="btn" href="/api/export?what=prijem" download><Icon name="download" />CSV</a>
         <Segmented label="Status" value={status} onChange={setStatus} options={[
           { value: 'novo', label: 'Novo', count: data.inbox.filter((x) => x.status === 'novo').length },
           { value: 'prihvaceno', label: 'Prihvaćeno' },

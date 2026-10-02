@@ -112,6 +112,7 @@ export default function Tasks() {
     <main className="page">
       <PageHead title="Narudžbe i zadaci">
         <Segmented label="Čije" options={scopeOpts} value={scope} onChange={changeScope} />
+        <a className="btn" href="/api/export?what=zadaci" download><Icon name="download" />CSV</a>
         <Button icon="quick" onClick={() => setForm('quick')}>Brzi unos</Button>
         <Button variant="primary" icon="plus" onClick={() => setForm('new')}>Nova narudžba</Button>
       </PageHead>

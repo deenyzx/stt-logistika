@@ -1,13 +1,18 @@
 # STT Logistika
 
-Temporary internal tool for wholesale (veleprodaja) and retail (maloprodaja), for the 2–3 months until the new ERP is rolled out. It is built the same way as bosning-admin (Next.js on Vercel, Upstash Redis for storage) and uses the Bosning Plan design system: cream and black bands, one orange accent, Archivo type, Day and Night themes. The whole interface is in Bosnian.
+Temporary internal tool for wholesale (veleprodaja) and retail (maloprodaja), for the 2–3 months until the new ERP is rolled out. It replaces the shared *STT_KupiLenovo_MP_VP* spreadsheet (and the Viber messages before it): prijenosnice, upiti MP and reservations live here now, next to the web shop orders, emails and everyone's own tasks, and everything waiting on a person is in one list. It is built the same way as bosning-admin (Next.js on Vercel, Upstash Redis for storage) and uses the Bosning Plan design system: cream and black bands, one orange accent, Archivo type, Day and Night themes. The whole interface is in Bosnian.
 
 What it does:
 
+- **Moje obaveze (my responsibilities), the home screen:** one list of everything waiting on the person who is logged in, from every part of the app: prijenosnice to answer, ship or receive, upiti to answer or close, reservations to confirm or that are running out, new web shop orders and customers' emails, and their own orders and tasks. Late items are on top, the rest by day (today marked green and yesterday yellow, like the sheet). Chips filter by kind; the counts at the top replace the sheet's DASHBOARD.
+- **Prijenosnice (transfers between warehouses):** replaces the PRIJENOSNICE sheet. Each prijenosnica shows where the goods go **from** (*polazno skladište*) and **to** (*dolazno skladište*), in a black-and-orange strip that cannot be misread. It has one or more lines; type the **šifra** and the name, purchase and sale price and the free VP stock fill in by themselves from the latest stock export (what the sheet's VLOOKUPs into ARTIKLI and STANJE did), and the total is worked out. Each line has its own status, as in the sheet: *Novi → Dostupno / Parcijalno dostupan / Nedostupno → Otpremljen → Primljen* (with the day it arrived, which replaces "Primljena dana"), plus a note per line.
+  - The **sending** warehouse answers availability and ships (*Otpremi dostupno*); the **receiving** warehouse confirms arrival (*Potvrdi prijem*). Which role works which side comes from the warehouse: a VP warehouse is handled by Veleprodaja, an MP warehouse by Maloprodaja, so a return from MP to VP swaps the sides by itself. Each step notifies the other side.
+  - Warehouses are set by the admin in **Postavke → Skladišta** (start: *VP skladište* and *Maloprodaja KupiLenovo*); add more stores there.
+- **Upiti MP (retail asks wholesale):** replaces the UPITI MP sheet: date, P/N, kataloški broj, article, quantity, customer details, the question. Veleprodaja writes the answer (price, time, details) and presses *Dostupno* or *Nije dostupno*; **the answer's date and author are recorded by themselves**. Whoever asked is notified, tells the customer and presses *Završeno*. From an answered upit, *Napravi prijenosnicu* or *Rezerviši* starts one already filled in.
 - **Narudžbe i zadaci (orders and tasks):** every order that comes in by email, phone, Viber, WhatsApp, the web shop or in person becomes a task. It has a customer (name, contact person, phone, email, delivery address), items, payment, delivery, total, an order date, an arrival date for the goods, a due date, an assignee and a department. Status steps are *Novo → U obradi → Čeka robu → Čeka ulaznu kalkulaciju → Za fakturisanje → Završeno*. This covers the "shipment is on its way from the distributor, the invoice waits for the ulazna kalkulacija" case: set the order to *Čeka robu* with the date the goods arrive, and when they come press **Roba stigla**.
   - **Sorted by date:** the list is sorted by order date, newest first, with a heading per day (Danas, Juče, Ponedjeljak 28. 9. …). It can also be sorted by oldest first, by arrival of goods, by due date or by status.
   - **Brzi unos (quick entry):** for orders taken by phone or in person. Type what was ordered, who, and the phone number. The order is marked **Dopuniti** until you fill in the rest and press *Sve je upisano*.
-  - **Roba stiže (arrival date):** for goods you're waiting on. Orders with an arrival date show on Pregled under *Roba stiže*, and the morning reminder lists what arrives that day or is late.
+  - **Roba stiže (arrival date):** for goods you're waiting on. Orders with an arrival date show on Moje obaveze (on the day, or late) and under *Roba stiže*, and the morning reminder lists what arrives that day or is late.
   - **Prati (watch):** follow any order to be notified about its status, arrival date and comments, even if it isn't yours.
 - **Prijem (inbox):** orders from the web shops (KupiLenovo, KupiTelevizor, …) and the company's emails arrive here by themselves. Nothing turns into a task on its own: **you choose** which ones to take. They are grouped into three tabs:
   - **Narudžbe (orders):** web shop orders and emails that are orders. **Prihvati kao narudžbu** makes an order with everything filled in: customer, phone, email, address, items, payment, delivery, total, and the day it was ordered. An order that came by email is marked *Dopuniti*, because the details are in the text.
@@ -16,14 +21,16 @@ What it does:
   
   The tab is picked by simple keywords and can be changed per email ("remember for all emails from this sender" makes it permanent). When the shop also sends its own "Nova narudžba #…" email, it is matched to the web order and not shown twice. See *Which emails reach Prijem* below.
 - **Web shop orders, live:** an order from a shop shows its current status in that shop. With the shop's API key, an order in *Procesuiranje* gets one button, **Završeno u shopu**, which sets it to *Završeno* without opening WordPress. This is on the order in Prijem and on the task made from it. It is the only thing the app ever changes in a shop (see *What leaves the app* below).
-- **Rezervacije (laptop reservations):** each reservation records who made it (name and department), who it is for, the purpose, the payment type (cash, card, bank transfer, credit/instalments, cash on delivery…), the deposit, a "reserved until" date, and comments. Every new reservation notifies both departments.
-- **Zalihe (stock):** upload the CSV your PDF scraper produces from the EKI EDI invoices, or let the office agent upload it. The app compares it with the previous export and lists what changed: quantity changes, new articles, and articles that disappeared. Tick each row once the web shop is updated.
-- **Comments everywhere:** on orders, reservations, inbox items and stock exports. Writing `@Ime` notifies that colleague.
+- **Rezervacije (laptops and anything else):** each reservation records who made it (name and department), what (a šifra fills in the name and price and shows the free stock), who it is for, the purpose, the payment type (cash, card, bank transfer, credit/instalments, cash on delivery…), the deposit, a "reserved until" date, and comments. A reservation made by Maloprodaja is **forwarded to Veleprodaja** (*Čeka potvrdu VP*); Veleprodaja sets the item aside and presses *Potvrdi i odvoji* (or *Odbij*), and the person who asked is notified. Veleprodaja's own reservations are active straight away, unless they tick *Proslijedi veleprodaji*. Open reservations are taken off the free stock.
+- **Zalihe (stock):** upload the CSV your PDF scraper produces from the EKI EDI invoices, or let the office agent upload it. The app compares it with the previous export and lists what changed: quantity changes, new articles, and articles that disappeared. Tick each row once the web shop is updated. The **Artikli i stanje** tab lists the latest export with VP stock, reserved, free, and the purchase and sale price (if the CSV has those columns: *Nabavna cijena*, *Prodajna cijena*, *MPC*, *Cijena*…; otherwise pick them in Postavke). This is the lookup the prijenosnice, upiti and reservations use.
+- **Database and CSV export:** everything is stored in the database (Upstash Redis), finished items included. Every list downloads as **CSV for Excel** (the *CSV* button on each page, or Postavke → Izvoz): prijenosnice (one row per line), upiti MP, rezervacije, narudžbe i zadaci, prijem, artikli i stanje. Semicolons, decimal commas and UTF-8 with a BOM, so Excel with Bosnian settings opens it with a double click. The admin can also download the whole database as one JSON file. Lists in the app show open items and anything finished in the last 60 days; older ones stay in the database and the CSV.
+- **Comments everywhere:** on prijenosnice, upiti, orders, reservations, inbox items and stock exports. Writing `@Ime` notifies that colleague.
 - **Logins with roles and notifications:** each person has their own account (Administrator, Veleprodaja, Maloprodaja). Notifications show on the bell in the app, and as phone or desktop push notifications once push is turned on for that device.
   - A web shop order's notification carries all its details: order number and total in the title, then the customer, city and phone, the items, the payment and delivery, and the customer's note.
   - An email's notification carries the sender, their phone number if it appears in the email, and the start of the message.
   - In **Postavke → Šta želim dobijati** each person turns categories on or off for themselves.
-- **Pregled (overview):** today's numbers, what needs attention (late, due soon, waiting on a kalkulacija), the inbox, and the latest notifications. Search covers customers, order numbers and article codes.
+- **Search** on Moje obaveze covers prijenosnice, upiti, orders, reservations and Prijem: numbers, šifre, articles, customers.
+- **Morning reminder:** besides arrivals, due dates and expiring reservations, it lists the prijenosnice, upiti and reservations waiting on each person.
 
 ## Integrations: what is possible and what is built
 
@@ -121,9 +128,9 @@ On the office PC (Windows):
 
 | Role | Sees | Is notified about |
 | --- | --- | --- |
-| Administrator | Everything, plus users, integrations, settings, data export | Everything the departments hear |
-| Veleprodaja | Orders and tasks, Prijem, reservations, stock | New wholesale orders, Prijem (web orders, email orders, customers' emails), new stock exports, all reservations |
-| Maloprodaja | Orders and tasks, reservations | New retail orders, all reservations |
+| Administrator | Everything, plus users, warehouses, integrations, settings, the full database export | Everything the departments hear |
+| Veleprodaja | Moje obaveze, prijenosnice, upiti MP, orders and tasks, Prijem, reservations, stock | New prijenosnice from a VP warehouse, new upiti MP, reservations to confirm, new wholesale orders, Prijem (web orders, email orders, customers' emails), new stock exports |
+| Maloprodaja | Moje obaveze, prijenosnice, upiti MP, orders and tasks, reservations | Availability, shipping and arrival of their prijenosnice, answers to their upiti, confirmed reservations, new retail orders |
 
 On top of that, everyone is notified about orders assigned to them, status changes, arrival dates and comments on things they created, are assigned to, watch (*Prati*) or commented on, and every `@mention`. The morning reminder goes to each person with their own list. Everyone can switch categories off for themselves in Postavke. To change who sees what, edit `ACCESS` in `lib/constants.js`.
 
@@ -161,6 +168,9 @@ Without Redis variables the app keeps data in memory (lost on restart, not share
 | `proxy.js` | Login gate for every page and API route except the login page and the integration endpoints (which check their own secrets). |
 | `components/` | The screens: `Overview`, `Tasks`, `InboxPage`, `Reservations`, `Stock`, `SettingsPage`; shared pieces in `ui.jsx`. |
 | `agent/` | The office PC agent (`eki_sync.py`), its sample config, and the Windows launcher. |
-| `app/api/export` | Admin download of all data as JSON: a backup, and a hand-over file for the new ERP. |
+| `lib/transfers.js`, `lib/requests.js` | Prijenosnice (lines, sides, statuses, notifications) and upiti MP. |
+| `lib/articles.js` | Article lookup by šifra from the latest stock export, minus open reservations. |
+| `lib/obligations.js` | *Moje obaveze*: what is waiting on each person, from every part of the app. |
+| `lib/exportCsv.js`, `app/api/export` | CSV export of every list (Excel-friendly), and the admin's full JSON download. |
 
 Data is stored under the key prefix `stt:` (change with `STORE_PREFIX`). To wipe everything, delete the `stt:*` keys in the Upstash console.

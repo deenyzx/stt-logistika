@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
 import { Icon, Button, Segmented, Input, Select, Sheet, Tag, Note, Avatar } from '@/components/ui.jsx';
-import { ROLES, DEPTS, NOTIF_CATS, can } from '@/lib/constants.js';
+import { ROLES, DEPTS, NOTIF_CATS, WAREHOUSE_KIND, can } from '@/lib/constants.js';
 import { RULE_FIELDS, RULE_ACTIONS } from '@/lib/emailRules.js';
 
 function b64ToUint8(b64) {
@@ -25,7 +25,8 @@ export default function SettingsPage() {
       <Account />
       <Push />
       <NotifPrefs />
-      {me.role === 'admin' ? <><Users /><Shops /><EmailSorting /><Integrations /><StockSettings /><ExportData /></> : null}
+      {me.role === 'admin' ? <><Users /><Warehouses /><Shops /><EmailSorting /><Integrations /><StockSettings /></> : null}
+      <ExportData />
     </main>
   );
 }
@@ -506,8 +507,9 @@ function StockSettings() {
     : <Input label={label} value={m[k]} onChange={(v) => setM({ ...m, [k]: v })} placeholder="Automatski" />;
   return (
     <Section id="zalihe" title="Zalihe i web shop">
-      <p className="muted">Kolone iz CSV-a prepoznajem sam (Šifra, Naziv, Količina…). Ako skripta koristi druga imena, izaberi ih ovdje. Vrijedi od sljedećeg izvoza.</p>
+      <p className="muted">Kolone iz CSV-a prepoznajem sam (Šifra, Naziv, Količina, Nabavna i Prodajna cijena…). Iz zadnjeg izvoza se u prijenosnicama, upitima i rezervacijama popune naziv, cijene i stanje VP kad se upiše šifra. Ako skripta koristi druga imena, izaberi ih ovdje. Vrijedi od sljedećeg izvoza.</p>
       <div className="grid3">{colField('key', 'Šifra artikla')}{colField('qty', 'Količina')}{colField('name', 'Naziv')}</div>
+      <div className="grid3">{colField('buy', 'Nabavna cijena')}{colField('sell', 'Prodajna cijena')}</div>
       <div><Button icon="save" busy={busy} onClick={() => save({ stockMapping: m }, 'Kolone sačuvane')}>Sačuvaj kolone</Button></div>
       <hr style={{ border: 0, borderTop: '1px solid var(--line)', width: '100%', margin: '4px 0' }} />
       <label className="checkrow">
@@ -519,11 +521,68 @@ function StockSettings() {
   );
 }
 
+const CSV_EXPORTS = [
+  { what: 'prijenosnice', area: 'prijenosnice', label: 'Prijenosnice', hint: 'jedan red po artiklu' },
+  { what: 'upiti', area: 'upiti', label: 'Upiti MP' },
+  { what: 'rezervacije', area: 'rezervacije', label: 'Rezervacije' },
+  { what: 'zadaci', area: 'zadaci', label: 'Narudžbe i zadaci' },
+  { what: 'prijem', area: 'prijem', label: 'Prijem (web i email)' },
+  { what: 'artikli', area: 'zalihe', label: 'Artikli i stanje' },
+];
+
 function ExportData() {
+  const { me } = useApp();
+  const list = CSV_EXPORTS.filter((x) => can(me.role, x.area));
   return (
-    <Section id="izvoz" title="Izvoz podataka">
-      <p className="muted">Sve narudžbe, rezervacije, prijem i zalihe u jednoj JSON datoteci. Korisno kao rezerva i za prelazak na novi ERP.</p>
-      <div><a className="btn" href="/api/export" download><Icon name="download" />Preuzmi sve podatke</a></div>
+    <Section id="izvoz" title="Izvoz podataka (CSV)">
+      <p className="muted">Sve je u bazi i može se preuzeti kao CSV za Excel, uključujući završene i stare stavke. Otvara se dvoklikom (tačka-zarez, decimalni zarez, naša slova).</p>
+      <div className="row" style={{ gap: 8 }}>
+        {list.map((x) => (
+          <a key={x.what} className="btn" href={'/api/export?what=' + x.what} download title={x.hint}><Icon name="download" />{x.label}</a>
+        ))}
+      </div>
+      {me.role === 'admin' ? (
+        <>
+          <p className="small muted">Cijela baza u jednoj JSON datoteci: rezerva i predaja podataka za novi ERP.</p>
+          <div><a className="btn btn-quiet" href="/api/export" download><Icon name="download" />Cijela baza (JSON)</a></div>
+        </>
+      ) : null}
+    </Section>
+  );
+}
+
+function Warehouses() {
+  const { data, reload, toast } = useApp();
+  const [list, setList] = useState(() => data.settings.warehouses || []);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!dirty) setList(data.settings.warehouses || []); }, [data.settings.warehouses, dirty]);
+  const change = (i, k, v) => { setList((l) => l.map((w, j) => (j === i ? { ...w, [k]: v } : w))); setDirty(true); };
+  const save = async () => {
+    setBusy(true);
+    try { await api('PATCH', '/api/settings', { warehouses: list }); toast('Skladišta sačuvana'); setDirty(false); reload(); }
+    catch (e) { toast(e.message, { error: true }); }
+    setBusy(false);
+  };
+  return (
+    <Section id="skladista" title="Skladišta">
+      <p className="muted">Između njih idu prijenosnice. Skladište veleprodaje vodi uloga Veleprodaja (javlja dostupnost, otprema, potvrđuje prijem kad je ono dolazno), a skladište maloprodaje uloga Maloprodaja. Promjena naziva ne mijenja stare prijenosnice.</p>
+      <div className="stack" style={{ gap: 8 }}>
+        {list.map((w, i) => (
+          <div className="wh-row" key={w.id || 'n' + i}>
+            <input className="input" aria-label="Naziv skladišta" value={w.name} onChange={(e) => change(i, 'name', e.target.value)} maxLength={60} />
+            <select className="select" aria-label="Vodi ga" value={w.kind} onChange={(e) => change(i, 'kind', e.target.value)}>
+              {Object.entries(WAREHOUSE_KIND).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <button type="button" className="iconbtn" aria-label={'Ukloni ' + w.name} onClick={() => { setList((l) => l.filter((_, j) => j !== i)); setDirty(true); }}><Icon name="trash" size={18} /></button>
+          </div>
+        ))}
+      </div>
+      <div className="row">
+        <Button icon="plus" onClick={() => { setList((l) => [...l, { name: '', kind: 'mp' }]); setDirty(true); }}>Dodaj skladište</Button>
+        {dirty ? <Button variant="primary" icon="save" busy={busy} onClick={save}>Sačuvaj skladišta</Button> : null}
+        {dirty ? <Button variant="quiet" onClick={() => { setDirty(false); setList(data.settings.warehouses || []); }}>Poništi</Button> : null}
+      </div>
     </Section>
   );
 }

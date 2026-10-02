@@ -9,17 +9,24 @@ import Overview from '@/components/Overview.jsx';
 import Tasks from '@/components/Tasks.jsx';
 import InboxPage from '@/components/InboxPage.jsx';
 import Reservations from '@/components/Reservations.jsx';
+import Transfers from '@/components/Transfers.jsx';
+import Requests from '@/components/Requests.jsx';
+import { obligationsFor, countByKind } from '@/lib/obligations.js';
 import Stock from '@/components/Stock.jsx';
 import SettingsPage from '@/components/SettingsPage.jsx';
 
 export const NAV = [
-  { key: 'pregled', label: 'Pregled', icon: 'home' },
+  { key: 'pregled', label: 'Moje obaveze', short: 'Obaveze', icon: 'home' },
+  { key: 'prijenosnice', label: 'Prijenosnice', icon: 'truck' },
+  { key: 'upiti', label: 'Upiti MP', short: 'Upiti', icon: 'chat' },
   { key: 'zadaci', label: 'Narudžbe i zadaci', short: 'Zadaci', icon: 'tasks' },
   { key: 'prijem', label: 'Prijem', icon: 'inbox' },
   { key: 'rezervacije', label: 'Rezervacije', icon: 'laptop' },
   { key: 'zalihe', label: 'Zalihe', icon: 'package' },
   { key: 'postavke', label: 'Postavke', icon: 'settings' },
 ];
+// Badges that mean "this is waiting on you" (orange); the rest are plain counts.
+const BADGE = ['pregled', 'prijenosnice', 'upiti', 'prijem', 'zalihe'];
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -91,10 +98,15 @@ function Shell() {
   const counts = useMemo(() => {
     if (!data) return {};
     const latest = data.stock?.[0];
+    const ob = obligationsFor(data, data.me);
+    const k = countByKind(ob);
     return {
+      pregled: ob.length,
+      prijenosnice: k.prijenosnica || 0,
+      upiti: k.upit || 0,
       zadaci: data.tasks.filter(isOpenTask).length,
       prijem: data.inbox.filter((x) => x.status === 'novo').length,
-      rezervacije: data.reservations.filter((r) => r.status === 'aktivna').length,
+      rezervacije: data.reservations.filter((r) => r.status === 'aktivna' || r.status === 'ceka_vp').length,
       zalihe: latest && latest.changes ? latest.changes.filter((c) => !latest.done[c.key]).length : 0,
     };
   }, [data]);
@@ -134,7 +146,7 @@ function Shell() {
               <button key={n.key} type="button" className={cx('snav-item', view === n.key && 'is-on')} aria-current={view === n.key ? 'page' : undefined} onClick={() => go(n.key)}>
                 <Icon name={n.icon} size={22} />
                 <span>{n.label}</span>
-                {n.key === 'prijem' || n.key === 'zalihe' ? (counts[n.key] ? <span className="snav-badge">{counts[n.key]}</span> : null)
+                {BADGE.includes(n.key) ? (counts[n.key] ? <span className="snav-badge">{counts[n.key]}</span> : null)
                   : counts[n.key] ? <span className="snav-count">{counts[n.key]}</span> : null}
               </button>
             ))}
@@ -164,6 +176,8 @@ function Shell() {
           ) : null}
 
           {view === 'pregled' ? <Overview /> : null}
+          {view === 'prijenosnice' ? <Transfers /> : null}
+          {view === 'upiti' ? <Requests /> : null}
           {view === 'zadaci' ? <Tasks /> : null}
           {view === 'prijem' ? <InboxPage /> : null}
           {view === 'rezervacije' ? <Reservations /> : null}
@@ -173,7 +187,7 @@ function Shell() {
           <nav className="bnav" aria-label="Navigacija">
             {bottom.map((n) => {
               const on = n.key === '_more' ? !bottom.some((b) => b.key === view) && view !== 'postavke' : view === n.key;
-              const badge = n.key === '_more' ? counts.zalihe : n.key === 'prijem' || n.key === 'zalihe' ? counts[n.key] : 0;
+              const badge = n.key === '_more' ? phoneNav.slice(4).reduce((a, x) => a + (BADGE.includes(x.key) ? counts[x.key] || 0 : 0), 0) : BADGE.includes(n.key) ? counts[n.key] : 0;
               return (
                 <button key={n.key} type="button" className={cx('bnav-item', on && 'is-on')} aria-current={on ? 'page' : undefined} onClick={() => (n.key === '_more' ? setMore(true) : go(n.key))}>
                   <span className="bnav-ic"><Icon name={n.icon} size={22} />{badge ? <span className="badge">{badge}</span> : null}</span>

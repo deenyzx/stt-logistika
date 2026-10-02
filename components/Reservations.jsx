@@ -1,15 +1,20 @@
 'use client';
-// Rezervacije laptopa: who reserved what, for whom and why, how it's paid, with comments. Everyone gets notified.
+// Rezervacije (laptops and anything else): who reserved what, for whom and why, how it's paid, with comments.
+// A reservation from maloprodaja goes to veleprodaja, which sets the item aside and confirms it ("Čeka potvrdu VP").
 import { useMemo, useState } from 'react';
 import { useApp, PageHead } from '@/components/App.jsx';
 import { api } from '@/components/useData.js';
 import { Icon, Button, Segmented, Chips, Input, Textarea, Sheet, ResTag, Avatar, Comments, Empty, Note, cx } from '@/components/ui.jsx';
+import { useArticle, StockPill, lookupCode } from '@/components/Article.jsx';
 import { RES_PURPOSE, PAYMENT, ROLES } from '@/lib/constants.js';
+
+const CONFIRMERS = ['admin', 'veleprodaja'];
+const OPEN = ['ceka_vp', 'aktivna'];
 import { fmtDate, fmtDue, fmtWhen, fmtMoney, fold, addDaysISO, parseMoney } from '@/lib/format.js';
 
 export default function Reservations() {
   const { data, me, route, go } = useApp();
-  const [status, setStatus] = useState('aktivna');
+  const [status, setStatus] = useState(() => (CONFIRMERS.includes(me.role) && data.reservations.some((r) => r.status === 'ceka_vp') ? 'ceka_vp' : 'otvorene'));
   const [q, setQ] = useState('');
   const [form, setForm] = useState(null);
   const all = data.reservations;
@@ -18,22 +23,24 @@ export default function Reservations() {
   const list = useMemo(() => {
     const f = fold(q);
     return all
-      .filter((r) => status === 'sve' || r.status === status || (status === 'moje' && r.createdBy?.id === me.id))
+      .filter((r) => status === 'sve' || r.status === status || (status === 'otvorene' && OPEN.includes(r.status)) || (status === 'moje' && r.createdBy?.id === me.id))
       .filter((r) => !f || [r.number, r.model, r.code, r.customer?.name, r.customer?.phone, r.purpose, r.createdBy?.name].some((x) => fold(x).includes(f)))
-      .sort((a, b) => (status === 'aktivna' ? (a.until || '9999') < (b.until || '9999') ? -1 : 1 : b.createdAt - a.createdAt));
+      .sort((a, b) => (status === 'otvorene' ? (a.status === 'ceka_vp') !== (b.status === 'ceka_vp') ? (a.status === 'ceka_vp' ? -1 : 1) : (a.until || '9999') < (b.until || '9999') ? -1 : 1 : b.createdAt - a.createdAt));
   }, [all, status, q, me.id]);
 
   const selected = route.arg ? all.find((r) => r.id === route.arg) : null;
 
   return (
     <main className="page">
-      <PageHead title="Rezervacije laptopa" lead="Ko je rezervisao, za koga i zašto. Svaka nova rezervacija stiže kao obavijest veleprodaji i maloprodaji.">
+      <PageHead title="Rezervacije" lead="Laptopi i ostala roba: ko je rezervisao, za koga i zašto. Rezervacija iz maloprodaje ide veleprodaji, koja robu odvoji i potvrdi.">
+        <a className="btn" href="/api/export?what=rezervacije" download><Icon name="download" />CSV</a>
         <Button variant="primary" icon="plus" onClick={() => setForm('new')}>Nova rezervacija</Button>
       </PageHead>
 
       <div className="row" style={{ gap: 12 }}>
         <Segmented label="Status" value={status} onChange={setStatus} options={[
-          { value: 'aktivna', label: 'Aktivne', count: count('aktivna') },
+          { value: 'otvorene', label: 'Otvorene', count: count('aktivna') + count('ceka_vp') || undefined },
+          { value: 'ceka_vp', label: 'Čeka VP', count: count('ceka_vp') || undefined },
           { value: 'preuzeto', label: 'Preuzete' },
           { value: 'otkazana', label: 'Otkazane' },
           { value: 'moje', label: 'Moje' },
@@ -46,7 +53,7 @@ export default function Reservations() {
         </label>
       </div>
 
-      {list.length === 0 ? <Empty>{status === 'aktivna' && !q ? 'Nema aktivnih rezervacija.' : 'Ništa ne odgovara.'}</Empty> : (
+      {list.length === 0 ? <Empty>{status === 'otvorene' && !q ? 'Nema otvorenih rezervacija.' : status === 'ceka_vp' && !q ? 'Nijedna rezervacija ne čeka potvrdu.' : 'Ništa ne odgovara.'}</Empty> : (
         <div className="rgrid">
           {list.map((r) => <ResCard key={r.id} r={r} onOpen={() => go('rezervacije', r.id)} />)}
         </div>
@@ -63,7 +70,7 @@ function ResCard({ r, onOpen }) {
   const { me, today } = useApp();
   const last = r.comments?.[r.comments.length - 1];
   return (
-    <button type="button" className={cx('card rcard', r.status !== 'aktivna' && 'is-closed')} onClick={onOpen}>
+    <button type="button" className={cx('card rcard', !OPEN.includes(r.status) && 'is-closed', r.status === 'ceka_vp' && 'is-waiting')} onClick={onOpen}>
       <span className="row" style={{ justifyContent: 'space-between', width: '100%' }}>
         <span className="num-label">{r.number}</span>
         <ResTag r={r} today={today} />
@@ -122,9 +129,23 @@ function ReservationDetail({ r, onClose, onEdit }) {
           <dd><input id={'until-' + r.id} type="date" className="input" style={{ minHeight: 40, padding: '6px 10px' }} value={r.until || ''} disabled={busy} onChange={(e) => save({ until: e.target.value || null }, e.target.value ? 'Produženo do ' + fmtDate(e.target.value) : 'Bez roka')} /></dd>
         </div>
         <div style={{ gridColumn: '1 / -1' }}><dt>Rezervisao/la</dt><dd className="row" style={{ gap: 8 }}><span className="ava ava-sm">{(r.createdBy?.name || '?').charAt(0)}</span>{r.createdBy?.name} · {ROLES[r.createdBy?.role]?.label || ''} · {fmtWhen(r.createdAt)}</dd></div>
+        {r.confirmedBy ? <div style={{ gridColumn: '1 / -1' }}><dt>Potvrdila veleprodaja</dt><dd>{r.confirmedBy.name} · {fmtWhen(r.confirmedAt)}</dd></div> : null}
+        {r.code && OPEN.includes(r.status) ? <div style={{ gridColumn: '1 / -1' }}><dt>Stanje VP</dt><dd><LiveStock code={r.code} qty={r.qty} /></dd></div> : null}
       </dl>
+      {r.status === 'ceka_vp' ? (
+        CONFIRMERS.includes(me.role)
+          ? <Note tone="accent" icon="hourglass">Maloprodaja traži da se ovo odvoji. Kad odvojiš robu, potvrdi.</Note>
+          : <Note icon="hourglass">Čeka da veleprodaja odvoji robu i potvrdi. Dobićeš obavijest.</Note>
+      ) : null}
       <div className="row">
-        {r.status === 'aktivna' ? (
+        {r.status === 'ceka_vp' && CONFIRMERS.includes(me.role) ? (
+          <>
+            <Button variant="primary" icon="check" busy={busy} onClick={() => save({ status: 'aktivna' }, 'Potvrđeno. Maloprodaja je obaviještena.')}>Potvrdi i odvoji</Button>
+            <Button variant="quiet" busy={busy} onClick={() => { if (confirm('Odbiti i otkazati rezervaciju ' + r.number + '? Napiši u komentar zašto.')) save({ status: 'otkazana' }, 'Rezervacija otkazana'); }}>Odbij</Button>
+          </>
+        ) : r.status === 'ceka_vp' ? (
+          <Button variant="quiet" busy={busy} onClick={() => { if (confirm('Otkazati rezervaciju ' + r.number + '?')) save({ status: 'otkazana' }, 'Rezervacija otkazana'); }}>Otkaži</Button>
+        ) : r.status === 'aktivna' ? (
           <>
             <Button variant="primary" icon="check" busy={busy} onClick={() => save({ status: 'preuzeto' }, 'Označeno kao preuzeto')}>Kupac preuzeo</Button>
             <Button busy={busy} icon="calendar" onClick={() => save({ until: addDaysISO(r.until && r.until > today ? r.until : today, 3) }, 'Produženo za 3 dana')}>Produži 3 dana</Button>
@@ -143,13 +164,26 @@ function ReservationDetail({ r, onClose, onEdit }) {
   );
 }
 
-export function ReservationForm({ r, onClose }) {
+function LiveStock({ code, qty }) {
+  const art = useArticle(code);
+  return <StockPill art={art} qty={qty} />;
+}
+
+export function ReservationForm({ r, onClose, preset }) {
   const { data, me, reload, toast, go, today } = useApp();
   const edit = !!r;
+  const confirmer = CONFIRMERS.includes(me.role);
   const [f, setF] = useState(() => r ? { ...r, deposit: r.deposit ?? '', price: r.price ?? '' } : {
-    model: '', code: '', qty: 1, price: '', customer: { name: '', phone: '' }, purposeType: 'prodaja', purpose: '',
-    payment: 'nije_dogovoreno', deposit: '', until: addDaysISO(today, 3), comment: '',
+    model: preset?.model || '', code: preset?.code || '', qty: preset?.qty || 1, price: '', customer: { name: preset?.customerText || '', phone: '' }, purposeType: 'prodaja', purpose: preset?.purpose || '',
+    payment: 'nije_dogovoreno', deposit: '', until: addDaysISO(today, 3), comment: '', forward: !confirmer,
   });
+  const [autoName, setAutoName] = useState(false);
+  const onCode = async (code) => {
+    set('code', code);
+    const a = await lookupCode(code);
+    if (a) setF((x) => (x.code !== code ? x : { ...x, model: !x.model || autoName ? a.name : x.model, price: x.price === '' && a.sell != null ? String(a.sell).replace('.', ',') : x.price }));
+    if (a && (!f.model || autoName)) setAutoName(true);
+  };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
@@ -157,16 +191,16 @@ export function ReservationForm({ r, onClose }) {
 
   const submit = async (e) => {
     e?.preventDefault();
-    if (!f.model.trim()) { setErr('Upiši koji laptop rezervišeš.'); return; }
+    if (!f.model.trim()) { setErr('Upiši šta rezervišeš.'); return; }
     setBusy(true);
     const payload = {
       model: f.model, code: f.code, qty: f.qty, price: f.price === '' ? null : parseMoney(f.price), customer: f.customer,
       purposeType: f.purposeType, purpose: f.purpose, payment: f.payment, deposit: f.deposit === '' ? null : parseMoney(f.deposit),
-      until: f.until || null, ...(edit ? {} : { comment: f.comment }),
+      until: f.until || null, ...(edit ? {} : { comment: f.comment, forward: confirmer ? !!f.forward : true }),
     };
     try {
       const res = edit ? await api('PATCH', '/api/reservations/' + r.id, payload) : await api('POST', '/api/reservations', payload);
-      toast(edit ? 'Sačuvano' : `Rezervacija ${res.reservation.number} je sačuvana. Kolege su obaviještene.`);
+      toast(edit ? 'Sačuvano' : res.reservation.status === 'ceka_vp' ? `Rezervacija ${res.reservation.number} je proslijeđena veleprodaji na potvrdu.` : `Rezervacija ${res.reservation.number} je sačuvana. Kolege su obaviještene.`);
       reload();
       onClose();
       if (!edit) go('rezervacije', res.reservation.id);
@@ -187,10 +221,10 @@ export function ReservationForm({ r, onClose }) {
       </>}>
       <form className="stack" style={{ gap: 20 }} onSubmit={submit}>
         {err ? <Note tone="danger" icon="alert">{err}</Note> : null}
-        <Input label="Laptop" value={f.model} onChange={(v) => set('model', v)} placeholder="Npr. Lenovo LOQ 15IRX9" list="res-models" autoFocus />
+        <Input label="Artikal" value={f.model} onChange={(v) => { set('model', v); setAutoName(false); }} placeholder="Npr. Lenovo LOQ 15IRX9, Digital Pen 2, monitor" list="res-models" autoFocus={!preset} />
         <datalist id="res-models">{models.map((m) => <option key={m} value={m} />)}</datalist>
         <div className="grid3">
-          <Input label="Šifra / S/N" value={f.code} onChange={(v) => set('code', v)} />
+          <Input label="Šifra / S/N" value={f.code} onChange={onCode} hint="Šifra popuni naziv i cijenu iz zaliha." />
           <Input label="Količina" value={f.qty} onChange={(v) => set('qty', v)} inputMode="numeric" className="num" />
           <Input label="Cijena (KM)" value={f.price} onChange={(v) => set('price', v)} inputMode="decimal" className="num" placeholder="Nije obavezno" />
         </div>
@@ -213,7 +247,18 @@ export function ReservationForm({ r, onClose }) {
           <Input label="Rezervisano do" type="date" value={f.until || ''} onChange={(v) => set('until', v)} />
         </div>
         {!edit ? <Textarea label="Komentar" value={f.comment} onChange={(v) => set('comment', v)} rows={3} placeholder="Npr. kupac traži i torbu, zvati prije petka" /> : null}
-        {!edit ? <Note icon="bell">Obavijest dobijaju veleprodaja i maloprodaja. Rezervacija se sprema pod tvojim imenom ({me.name}).</Note> : null}
+        {f.code ? <LiveStock code={f.code} qty={f.qty} /> : null}
+        {!edit && confirmer ? (
+          <label className="checkrow">
+            <input type="checkbox" checked={!!f.forward} onChange={(e) => set('forward', e.target.checked)} />
+            <span>Proslijedi veleprodaji na potvrdu (neko drugi odvaja robu)</span>
+          </label>
+        ) : null}
+        {!edit ? (
+          !confirmer || f.forward
+            ? <Note icon="bell">Rezervacija ide <strong>veleprodaji</strong>: oni odvoje robu i potvrde, a ti dobiješ obavijest. Sprema se pod tvojim imenom ({me.name}).</Note>
+            : <Note icon="bell">Rezervacija je odmah aktivna. Obavijest dobijaju veleprodaja i maloprodaja. Sprema se pod tvojim imenom ({me.name}).</Note>
+        ) : null}
         <button type="submit" hidden />
       </form>
     </Sheet>
